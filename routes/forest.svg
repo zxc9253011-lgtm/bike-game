@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="320" viewBox="0 0 640 320" fill="none">
+<defs>
+<linearGradient id="sky" x1="320" y1="0" x2="320" y2="240" gradientUnits="userSpaceOnUse"><stop stop-color="#b7dfe2"/><stop offset="1" stop-color="#e5efdc"/></linearGradient>
+<linearGradient id="ground" x1="290" y1="110" x2="370" y2="350" gradientUnits="userSpaceOnUse"><stop stop-color="#95b27b"/><stop offset="1" stop-color="#587a50"/></linearGradient>
+<linearGradient id="path" x1="320" y1="120" x2="320" y2="320" gradientUnits="userSpaceOnUse"><stop stop-color="#d3d6b4"/><stop offset="1" stop-color="#d6ceb5"/></linearGradient>
+<linearGradient id="tree" x1="-20" y1="-60" x2="27" y2="-12" gradientUnits="userSpaceOnUse"><stop stop-color="#639d69"/><stop offset="1" stop-color="#315c44"/></linearGradient>
+<linearGradient id="glow" x1="500" y1="0" x2="200" y2="300" gradientUnits="userSpaceOnUse"><stop stop-color="#ffefbd" stop-opacity=".52"/><stop offset="1" stop-color="#ffefbd" stop-opacity="0"/></linearGradient>
+<symbol id="tree" viewBox="-36 -90 72 100"><path d="M-4-36 0-80 5-36 4 8H-3Z" fill="#756e4b"/><path d="m0-88 27 37-10-1 16 29-15-2 17 25H-35l18-25-15 2 16-29-11 1Z" fill="url(#tree)"/><path d="m0-88 2 88h33L18-25l15 2-16-29 10 1Z" fill="#244d39" opacity=".3"/><path d="m0-88-27 37 27-5Z" fill="#a0ba75" opacity=".55"/><path d="m-16-52-16 29L0-33v-23Z" fill="#90b976" opacity=".36"/></symbol>
+<symbol id="bush" viewBox="0 0 80 36"><path d="M1 31 8 13l13-5 16 8L51 2l17 7 11 23Z" fill="#6c9a5e"/><path d="m37 16 14-14 3 30H24Z" fill="#85ae6c"/><path d="m54 32-3-30 17 7 11 23Z" fill="#507b4e"/></symbol>
+</defs>
+<path fill="url(#sky)" d="M0 0h640v320H0z"/>
+<circle cx="489" cy="57" r="25" fill="#fff1c4" opacity=".9"/>
+<path d="m0 113 62-37 60 30 65-56 65 70 52-35 54 37 56-61 69 42 70-29 87 34v62H0Z" fill="#aac7b5"/>
+<path d="m0 145 84-41 75 32 101-49 74 55 66-31 82 25 76-35 82 29v80H0Z" fill="#83ab90"/>
+<path d="m0 165 100-32 98 18 117-12 104-5 105 17 116-23v192H0Z" fill="url(#ground)"/>
+<path d="M325 138c-57 19-38 36 4 52s32 35-8 52-84 38-99 78h181c-28-45-93-59-53-83s42-38-9-54-56-29-11-45Z" fill="url(#path)"/>
+<path d="M324 143c-35 15-33 29 14 46s35 35-8 53c-40 17-70 36-80 78" stroke="#b9c09d" stroke-width="2"/>
+<path d="m0 271 79-32 70 20 90-35-17 96H0Z" fill="#6b8b51"/>
+<path d="m640 218-95 20-52-6-45 47-42 41h234Z" fill="#567a49"/>
+<g opacity=".72"><use href="#tree" x="102" y="78" width="45" height="63"/><use href="#tree" x="161" y="89" width="42" height="58"/><use href="#tree" x="214" y="89" width="40" height="56"/><use href="#tree" x="388" y="87" width="45" height="63"/><use href="#tree" x="440" y="86" width="43" height="60"/><use href="#tree" x="492" y="85" width="47" height="65"/></g>
+<g><use href="#tree" x="28" y="43" width="92" height="128"/><use href="#tree" x="118" y="66" width="70" height="98"/><use href="#tree" x="182" y="96" width="54" height="75"/><use href="#tree" x="413" y="85" width="60" height="83"/><use href="#tree" x="460" y="51" width="87" height="121"/><use href="#tree" x="545" y="29" width="102" height="142"/></g>
+<path d="m30 251 115-50 28 5-122 63Z" fill="#3d6343" opacity=".16"/>
+<path d="m640 284-123-89-24 8 112 104Z" fill="#375c3d" opacity=".16"/>
+<use href="#tree" x="-39" y="55" width="139" height="193"/><use href="#tree" x="78" y="96" width="99" height="138"/>
+<use href="#tree" x="545" y="55" width="137" height="190"/><use href="#tree" x="461" y="101" width="96" height="133"/>
+<use href="#bush" x="-20" y="246" width="150" height="68"/><use href="#bush" x="516" y="256" width="143" height="64"/>
+<use href="#bush" x="158" y="199" width="57" height="26"/><use href="#bush" x="413" y="212" width="60" height="27"/>
+<g fill="#cad09b"><path d="m177 271 4-13 3 13 6-8-2 13h-12Z"/><path d="m446 281 3-16 5 11 5-5-3 15h-11Z"/><path d="m105 304 3-14 4 10 4-7 1 13Z"/></g>
+<g fill="#f1e4b5"><circle cx="195" cy="244" r="2"/><circle cx="206" cy="251" r="2.5"/><circle cx="186" cy="251" r="2"/><circle cx="443" cy="255" r="2"/><circle cx="457" cy="252" r="2.5"/></g>
+<path fill="url(#glow)" d="M0 0h640v320H0z"/>
+</svg>
