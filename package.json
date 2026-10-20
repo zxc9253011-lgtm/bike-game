@@ -1,0 +1,38 @@
+{
+  "name": "forest-pedal",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:browser": "node tests/browser-smoke.mjs",
+    "test:pose": "node tests/pose-integration.mjs",
+    "assets:pose": "node scripts/prepare-model.mjs",
+    "package:desktop": "npm run build && node scripts/package-desktop.mjs",
+    "assets:windows": "node scripts/prepare-windows-runtime.mjs",
+    "build:pages": "tsc -b && vite build --mode pages --outDir dist-pages",
+    "publish:pages": "npm run build:pages && node scripts/publish-pages.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.180.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "playwright": "^1.64.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.1.0"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}
