@@ -92,13 +92,13 @@ try {
     "main",
     sourceFiles,
     root,
-    "Add two-player races, high knees and fullscreen pose preview",
+    "Fix standing high knees with occluded ankles and slow steps",
   );
   await publish(
     "gh-pages",
     await filesUnder(join(root, "dist-pages")),
     join(root, "dist-pages"),
-    "Publish two-player races and exercise modes",
+    "Publish standing high-knee motion fixes",
   );
   console.log(
     `Website files uploaded. GitHub Pages deploys the gh-pages branch automatically.\nWebsite: ${website}`,

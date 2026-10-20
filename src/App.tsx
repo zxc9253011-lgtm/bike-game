@@ -665,7 +665,9 @@ export default function App() {
                           ? `玩家 1 ${players[0].tracking ? "已辨識" : "未入鏡"} · 玩家 2 ${players[1].tracking ? "已辨識" : "未入鏡"}`
                           : players[0].tracking
                             ? "已偵測到你，標點會跟著動作移動"
-                            : "請讓肩膀、膝蓋和雙腳完整入鏡"}
+                            : exerciseMode === "standing"
+                              ? "請讓肩膀、髖部與膝蓋入鏡"
+                              : "請讓肩膀、膝蓋和雙腳完整入鏡"}
                 </div>
               </aside>
               {playerCount === 2 && (
@@ -1072,8 +1074,10 @@ export default function App() {
                     <ShieldCheck size={17} />
                   </span>
                   <p>
-                    {playerCount === 2
-                      ? "兩人共用一個鏡頭，各站／坐在畫面左右區域，肩膀到雙腳都要入鏡。"
+                    {playerCount === 2 &&
+                      "兩人共用一個鏡頭，分別在畫面左右區域。"}
+                    {exerciseMode === "standing"
+                      ? "鏡頭需拍到肩膀、髖部與膝蓋；抬膝時腳踝短暫遮住仍可辨識。"
                       : "鏡頭需拍到肩膀、髖部、膝蓋和腳踝。"}
                     <br />
                     <small>影像僅在裝置分析，不錄影、不上傳。</small>
@@ -1220,7 +1224,7 @@ export default function App() {
                       <div>
                         <h3>打開攝影機，讓雙腿入鏡</h3>
                         <p>
-                          將鏡頭放在前方，完整拍到肩膀、髖部、膝蓋及腳踝。允許攝影機後，綠色標點會跟著身體移動。需要
+                          將鏡頭放在前方，拍到肩膀、髖部與膝蓋；坐姿模式還需拍到腳踝。允許攝影機後，綠色標點會跟著身體移動。需要
                           HTTPS 或本機環境。雙人共用一個鏡頭，畫面左側是綠色玩家
                           1，右側是藍色玩家 2。右上角小視窗放大後也會持續顯示。
                         </p>

@@ -6,7 +6,11 @@ const DOWN = -0.55;
 const HIGH = 0.04;
 
 function step(estimator: HighKneeEstimator, side: 0 | 1, finishTime: number) {
-  estimator.update(side === 0 ? HIGH : DOWN, side === 1 ? HIGH : DOWN, finishTime - 200);
+  estimator.update(
+    side === 0 ? HIGH : DOWN,
+    side === 1 ? HIGH : DOWN,
+    finishTime - 200,
+  );
   return estimator.update(DOWN, DOWN, finishTime);
 }
 
@@ -18,7 +22,7 @@ test("counts complete alternating high knees and converts steps to full-turn RPM
     feedback: "raise",
   });
   assert.deepEqual(step(estimator, 0, 400), {
-    cadence: 0,
+    cadence: 60,
     steps: 1,
     feedback: "good",
   });
@@ -54,7 +58,11 @@ test("a knee must first be down, then high, then down; holding it high never rep
     assert.equal(estimator.update(HIGH, DOWN, time).steps, 0);
   }
   assert.equal(estimator.update(DOWN, DOWN, 6100).steps, 1);
-  assert.equal(step(estimator, 0, 6600).steps, 1, "the same leg cannot score twice");
+  assert.equal(
+    step(estimator, 0, 6600).steps,
+    1,
+    "the same leg cannot score twice",
+  );
   assert.equal(step(estimator, 1, 7100).steps, 2);
 });
 
@@ -70,7 +78,10 @@ test("lowering and raising thresholds have hysteresis", () => {
   estimator.update(-0.3, DOWN, 0);
   estimator.update(-0.08, DOWN, 200);
   for (let index = 0; index < 10; index++) {
-    assert.equal(estimator.update(index % 2 ? -0.09 : -0.07, DOWN, 250 + index * 30).steps, 0);
+    assert.equal(
+      estimator.update(index % 2 ? -0.09 : -0.07, DOWN, 250 + index * 30).steps,
+      0,
+    );
   }
   assert.equal(estimator.update(-0.3, DOWN, 600).steps, 1);
 });
@@ -88,8 +99,88 @@ test("two seconds idle stops cadence while retaining completed steps", () => {
     cadence: 0,
     feedback: "raise",
   });
-  assert.equal(step(estimator, 0, 3400).cadence, 0);
-  assert.equal(step(estimator, 1, 3900).cadence, 60);
+  assert.ok(
+    step(estimator, 0, 3400).cadence > 0,
+    "the next slow step still has a timing reference",
+  );
+  assert.ok(step(estimator, 1, 3900).cadence > 0);
+});
+
+test("slow alternating high knees at 2 to 5 seconds per step generate speed", () => {
+  for (const period of [2000, 2400, 3000, 5000]) {
+    const estimator = new HighKneeEstimator();
+    let result = estimator.update(DOWN, DOWN, 0);
+    let counted = 0;
+    for (let time = 100; time <= period * 6; time += 100) {
+      const cycle = Math.floor(time / period);
+      const progress = (time % period) / period;
+      const lift = progress >= 0.2 && progress < 0.7 ? HIGH : DOWN;
+      result = estimator.update(
+        cycle % 2 ? DOWN : lift,
+        cycle % 2 ? lift : DOWN,
+        time,
+      );
+      if (result.steps > counted) {
+        assert.ok(
+          result.cadence > 0,
+          `${period}ms: a completed slow step must move the bike`,
+        );
+        counted = result.steps;
+      }
+    }
+    assert.equal(result.steps, 6);
+    assert.ok(
+      Math.abs(result.cadence - 30000 / period) < 0.001,
+      `${period}ms: speed follows actual step timing`,
+    );
+    const stopped = estimator.update(DOWN, DOWN, period * 6 + 100);
+    assert.equal(stopped.steps, 6);
+  }
+});
+
+test("the first complete lift gives a bounded speed estimate after both raising and lowering", () => {
+  const estimator = new HighKneeEstimator();
+  for (let time = 0; time <= 4000; time += 100)
+    estimator.update(DOWN, DOWN, time);
+  estimator.update(-0.2, DOWN, 4200);
+  estimator.update(HIGH, DOWN, 4500);
+  assert.equal(
+    estimator.update(HIGH, DOWN, 4700).cadence,
+    0,
+    "holding a raised knee has not completed a step",
+  );
+  const result = estimator.update(DOWN, DOWN, 5000);
+  assert.equal(result.steps, 1);
+  assert.equal(
+    result.cadence,
+    30,
+    "the first estimate includes the entire one-second lift, excluding time spent waiting",
+  );
+});
+
+test("a slow pace stops after its adaptive timeout and restarts after a long rest", () => {
+  const estimator = new HighKneeEstimator();
+  estimator.update(DOWN, DOWN, 0);
+  let reading = estimator.update(DOWN, DOWN, 0);
+  for (let time = 100; time <= 9000; time += 100) {
+    const cycle = Math.floor(time / 3000);
+    const high = time % 3000 >= 1000 && time % 3000 < 2000;
+    reading = estimator.update(
+      cycle % 2 || !high ? DOWN : HIGH,
+      cycle % 2 && high ? HIGH : DOWN,
+      time,
+    );
+  }
+  assert.equal(reading.cadence, 10);
+  const steps = reading.steps;
+  for (let time = 9100; time <= 16000; time += 100)
+    reading = estimator.update(DOWN, DOWN, time);
+  assert.equal(reading.cadence, 0);
+  assert.equal(reading.steps, steps);
+  assert.ok(
+    step(estimator, 0, 16400).cadence > 0,
+    "a complete lift restarts after a long rest, including the same side",
+  );
 });
 
 test("tracking gaps and reversed timestamps discard incomplete lifts, preserving the count", () => {

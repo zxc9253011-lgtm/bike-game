@@ -98,6 +98,10 @@ const CONNECTIONS = [
   [28, 32],
 ];
 const JOINTS = [11, 12, 23, 24, 25, 26, 27, 28, 31, 32];
+const positioningFeedback = (exerciseMode: ExerciseMode): string =>
+  exerciseMode === "standing"
+    ? "請讓肩膀、髖部與膝蓋入鏡"
+    : "請讓肩膀到雙腳入鏡";
 const blankPlayer = (feedback = "請讓肩膀到雙腳入鏡"): PlayerAnalysis => ({
   cadence: 0,
   tracking: false,
@@ -149,8 +153,8 @@ export default function PoseCamera({
   const seated = useRef([new CadenceEstimator(), new CadenceEstimator()]);
   const standing = useRef([new HighKneeEstimator(), new HighKneeEstimator()]);
   const analyses = useRef<[PlayerAnalysis, PlayerAnalysis]>([
-    blankPlayer(),
-    blankPlayer(),
+    blankPlayer(positioningFeedback(exerciseMode)),
+    blankPlayer(positioningFeedback(exerciseMode)),
   ]);
   const pauseAnalysis = useRef<() => void>(() => undefined);
   const resetAnalysis = useRef<() => void>(() => undefined);
@@ -196,8 +200,12 @@ export default function PoseCamera({
     for (const estimator of seated.current) estimator.reset();
     for (const estimator of standing.current) estimator.reset();
     analyses.current = [
-      blankPlayer(),
-      blankPlayer(playerCount === 2 ? undefined : "單人模式"),
+      blankPlayer(positioningFeedback(live.current.exerciseMode)),
+      blankPlayer(
+        playerCount === 2
+          ? positioningFeedback(live.current.exerciseMode)
+          : "單人模式",
+      ),
     ];
     setErrorMessage("");
 
@@ -246,7 +254,7 @@ export default function PoseCamera({
           ? live.current.exerciseMode === "standing"
             ? "膝蓋抬到髖部高度"
             : "請交替抬腳踩踏"
-          : player.feedback,
+          : positioningFeedback(live.current.exerciseMode),
       })) as [PlayerAnalysis, PlayerAnalysis];
       publish();
     };
@@ -267,7 +275,7 @@ export default function PoseCamera({
     };
     const invalidate = (
       session: PoseSession,
-      feedback = "請讓肩膀到雙腳入鏡",
+      feedback = positioningFeedback(live.current.exerciseMode),
     ) => {
       seated.current[session.index].reset();
       standing.current[session.index].suspend();
@@ -380,7 +388,11 @@ export default function PoseCamera({
       const now = performance.now();
       session.lastResult = now;
       const points = result.poseLandmarks;
-      const motion = analyzeLegPose(points, session.imageAspect);
+      const motion = analyzeLegPose(
+        points,
+        session.imageAspect,
+        live.current.exerciseMode,
+      );
       if (!motion || !points) {
         invalidate(session);
         // Keep any confidently visible joints as positioning guidance; an

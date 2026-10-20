@@ -47,13 +47,17 @@ export function visiblePoint(
 export function analyzeLegPose(
   points: PosePoint[] | undefined,
   imageAspect = 4 / 3,
+  exerciseMode: "seated" | "standing" = "seated",
 ): {
   signal: number;
   leftLift: number;
   rightLift: number;
   quality: number;
 } | null {
-  const legJoints = [23, 24, 25, 26, 27, 28];
+  // Standing high knees use hips and knees. A raised foot is often hidden by
+  // the thigh or outside the camera frame, so ankles must not gate this mode.
+  const legJoints =
+    exerciseMode === "standing" ? [23, 24, 25, 26] : [23, 24, 25, 26, 27, 28];
   if (
     !points ||
     !legJoints.every((joint) => visiblePoint(points[joint])) ||
@@ -69,12 +73,16 @@ export function analyzeLegPose(
     (points[11].y + points[12].y - points[23].y - points[24].y) / 2,
   );
   if (torso < 0.07) return null;
-  const leftPedalLift =
-    points[23].y - (points[25].y * 0.6 + points[27].y * 0.4);
-  const rightPedalLift =
-    points[24].y - (points[26].y * 0.6 + points[28].y * 0.4);
+  let signal = 0;
+  if (exerciseMode === "seated") {
+    const leftPedalLift =
+      points[23].y - (points[25].y * 0.6 + points[27].y * 0.4);
+    const rightPedalLift =
+      points[24].y - (points[26].y * 0.6 + points[28].y * 0.4);
+    signal = (leftPedalLift - rightPedalLift) / torso;
+  }
   return {
-    signal: (leftPedalLift - rightPedalLift) / torso,
+    signal,
     leftLift: (points[23].y - points[25].y) / torso,
     rightLift: (points[24].y - points[26].y) / torso,
     quality: Math.round(
