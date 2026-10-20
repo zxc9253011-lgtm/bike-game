@@ -4,7 +4,7 @@
 
 ## 直接在瀏覽器玩
 
-網頁版網址為 **https://zxc9253011-lgtm.github.io/bike-game/**。程式庫首次需在 [Settings → Pages](https://github.com/zxc9253011-lgtm/bike-game/settings/pages) 選擇 **Deploy from a branch → gh-pages → / (root) → Save**，待 GitHub 發布完成後即可直接遊玩，無須下載或安裝。使用攝影機時，請允許瀏覽器權限。
+**[點這裡直接開始遊戲](https://zxc9253011-lgtm.github.io/bike-game/)**。網站已部署到 GitHub Pages，無須下載、安裝或輸入指令。使用攝影機時，請允許瀏覽器權限。
 
 `main` 保存原始碼，`gh-pages` 保存編譯後的靜態網站，`downloads` 保存先前的 Windows 下載版。更新網頁版可執行 `npm run publish:pages`；此指令會建置並推送網站至 GitHub，請只在已取得發布授權時執行。
 
