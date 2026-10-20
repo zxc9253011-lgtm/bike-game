@@ -92,13 +92,13 @@ try {
     "main",
     sourceFiles,
     root,
-    "Fix standing high knees with occluded ankles and slow steps",
+    "Recover pose tracking and preserve skeleton overlays",
   );
   await publish(
     "gh-pages",
     await filesUnder(join(root, "dist-pages")),
     join(root, "dist-pages"),
-    "Publish standing high-knee motion fixes",
+    "Publish resilient camera motion tracking",
   );
   console.log(
     `Website files uploaded. GitHub Pages deploys the gh-pages branch automatically.\nWebsite: ${website}`,

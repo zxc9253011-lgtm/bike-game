@@ -57,7 +57,12 @@ export class HighKneeEstimator {
     this.feedback = "raise";
   }
 
-  update(leftLift: number, rightLift: number, timeMs: number): HighKneeReading {
+  update(
+    leftLift: number,
+    rightLift: number,
+    timeMs: number,
+    maxFrameGapMs = MAX_FRAME_GAP_MS,
+  ): HighKneeReading {
     if (![leftLift, rightLift, timeMs].every(Number.isFinite)) {
       this.suspend();
       return this.reading();
@@ -66,7 +71,14 @@ export class HighKneeEstimator {
     if (this.lastFrameTime !== null) {
       if (
         timeMs < this.lastFrameTime ||
-        timeMs - this.lastFrameTime > MAX_FRAME_GAP_MS
+        timeMs - this.lastFrameTime >
+          Math.min(
+            6000,
+            Math.max(
+              MAX_FRAME_GAP_MS,
+              Number.isFinite(maxFrameGapMs) ? maxFrameGapMs : MAX_FRAME_GAP_MS,
+            ),
+          )
       ) {
         this.suspend();
       } else if (timeMs === this.lastFrameTime) {

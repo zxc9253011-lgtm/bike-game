@@ -9,6 +9,7 @@ type Props = {
   playerCount?: 1 | 2;
   opponentSpeed?: number;
   playerDistances?: [number, number];
+  analysisActive?: boolean;
 };
 type Vec = [number, number, number];
 
@@ -62,6 +63,7 @@ export default function RideScene({
   playerCount = 1,
   opponentSpeed = 0,
   playerDistances,
+  analysisActive = false,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const motionRef = useRef({
@@ -70,6 +72,7 @@ export default function RideScene({
     playerCount,
     opponentSpeed,
     playerDistances,
+    analysisActive,
   });
   const routeRef = useRef(route);
   const changeRouteRef = useRef<((next: Route) => void) | null>(null);
@@ -83,8 +86,16 @@ export default function RideScene({
       playerCount,
       opponentSpeed,
       playerDistances,
+      analysisActive,
     };
-  }, [speed, running, playerCount, opponentSpeed, playerDistances]);
+  }, [
+    speed,
+    running,
+    playerCount,
+    opponentSpeed,
+    playerDistances,
+    analysisActive,
+  ]);
   useEffect(() => {
     changePlayersRef.current?.(playerCount);
   }, [playerCount]);
@@ -1011,6 +1022,13 @@ export default function RideScene({
     }
     const render = (now: number) => {
       frame = requestAnimationFrame(render);
+      // Leave GPU time for camera inference while retaining the same scene.
+      if (
+        motionRef.current.analysisActive &&
+        previous &&
+        now - previous < 1000 / 30
+      )
+        return;
       const dt = previous ? Math.min((now - previous) / 1000, 0.05) : 0;
       previous = now;
       const {

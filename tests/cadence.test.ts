@@ -80,3 +80,38 @@ test("explicit reset starts a new ride with no inherited cadence", () => {
   assert.equal(estimator.update(0.4, 0), 0);
   assert.ok(Math.abs(pedal(estimator, 30) - 30) < 3);
 });
+
+test("slow inference retains multiple pedal samples and detects full turns", () => {
+  const estimator = new CadenceEstimator();
+  let result = 0;
+  // A genuine 7.6-second full turn sampled every 1.9 seconds. The former
+  // fixed 1.6-second window contained only one point and could never move.
+  for (let frame = 0; frame <= 40; frame++) {
+    result = estimator.update(
+      0.4 + 0.3 * Math.sin((frame * Math.PI) / 2),
+      frame * 1900,
+      5000,
+    );
+  }
+  assert.ok(
+    Math.abs(result - 60000 / 7600) < 0.01,
+    `expected a slow full-turn rate, received ${result}`,
+  );
+  for (let frame = 41; frame <= 50; frame++)
+    result = estimator.update(0.4, frame * 1900, 5000);
+  assert.equal(
+    result,
+    0,
+    "slow inference must still detect that motion has stopped",
+  );
+});
+
+test("a low-frame-rate stationary person never manufactures pedal movement", () => {
+  const estimator = new CadenceEstimator();
+  for (let frame = 0; frame <= 30; frame++) {
+    assert.equal(
+      estimator.update(0.4 + Math.sin(frame) * 0.008, frame * 1900, 5000),
+      0,
+    );
+  }
+});

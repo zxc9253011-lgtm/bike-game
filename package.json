@@ -17,7 +17,8 @@
     "publish:pages": "npm run build:pages && node scripts/publish-pages.mjs",
     "test:multiplayer": "node tests/multiplayer-smoke.mjs",
     "test:dual-pose": "node tests/dual-pose-integration.mjs",
-    "test:standing-motion": "node tests/standing-motion-smoke.mjs"
+    "test:standing-motion": "node tests/standing-motion-smoke.mjs",
+    "test:tracking": "node tests/tracking-recovery-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

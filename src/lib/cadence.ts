@@ -13,6 +13,7 @@ export class CadenceEstimator {
   private intervals: number[] = [];
   private samples: Array<{ time: number; value: number }> = [];
   private rpm = 0;
+  private frameIntervalMs = 0;
 
   reset(): void {
     this.lastTime = null;
@@ -23,13 +24,22 @@ export class CadenceEstimator {
     this.intervals = [];
     this.samples = [];
     this.rpm = 0;
+    this.frameIntervalMs = 0;
   }
 
-  update(signal: number, timeMs: number): number {
+  update(signal: number, timeMs: number, maxFrameGapMs = 1500): number {
     if (!Number.isFinite(signal) || !Number.isFinite(timeMs)) return 0;
     if (
       this.lastTime !== null &&
-      (timeMs < this.lastTime || timeMs - this.lastTime > 1500)
+      (timeMs < this.lastTime ||
+        timeMs - this.lastTime >
+          Math.min(
+            6000,
+            Math.max(
+              1500,
+              Number.isFinite(maxFrameGapMs) ? maxFrameGapMs : 1500,
+            ),
+          ))
     )
       this.reset();
     if (this.lastTime === null) {
@@ -41,10 +51,20 @@ export class CadenceEstimator {
     }
     const dt = Math.max(0, timeMs - this.lastTime);
     this.lastTime = timeMs;
+    // Keep enough real samples when inference is slower than the old fixed
+    // 1.6-second window; otherwise every frame discarded its predecessor.
+    this.frameIntervalMs = Math.max(dt, this.frameIntervalMs * 0.9);
+    const sampleWindow = Math.max(
+      1600,
+      Math.min(12000, this.frameIntervalMs * 3.1),
+    );
     this.filtered += (signal - this.filtered) * (1 - Math.exp(-dt / 65));
     this.center += (this.filtered - this.center) * (1 - Math.exp(-dt / 2400));
     this.samples.push({ time: timeMs, value: this.filtered });
-    while (this.samples.length > 1 && this.samples[0].time < timeMs - 1600)
+    while (
+      this.samples.length > 1 &&
+      this.samples[0].time < timeMs - sampleWindow
+    )
       this.samples.shift();
 
     let min = Infinity;
@@ -63,8 +83,12 @@ export class CadenceEstimator {
       this.armed = false;
       if (this.lastCrossing !== null) {
         const interval = timeMs - this.lastCrossing;
-        // Physiological operating range: 12–180 complete revolutions/minute.
-        if (interval >= 333 && interval <= 5000) {
+        // Slow inference needs a longer observation period for a full turn.
+        const maximumPeriod = Math.max(
+          5000,
+          Math.min(12000, this.frameIntervalMs * 4),
+        );
+        if (interval >= 333 && interval <= maximumPeriod) {
           this.intervals.push(interval);
           if (this.intervals.length > 3) this.intervals.shift();
           const sorted = [...this.intervals].sort((a, b) => a - b);
@@ -74,7 +98,7 @@ export class CadenceEstimator {
               ? sorted[middle]
               : (sorted[middle - 1] + sorted[middle]) / 2;
           this.rpm = Math.min(180, 60000 / median);
-        } else if (interval > 5000) {
+        } else if (interval > maximumPeriod) {
           this.intervals = [];
           this.rpm = 0;
         }
@@ -87,12 +111,13 @@ export class CadenceEstimator {
 
     const staleAfter = this.intervals.length
       ? Math.max(1800, this.intervals[this.intervals.length - 1] * 1.8)
-      : 5500;
+      : Math.max(5500, Math.min(12000, this.frameIntervalMs * 4) * 1.1);
     const stale =
       this.lastCrossing !== null && timeMs - this.lastCrossing > staleAfter;
     const still =
       this.samples.length > 1 &&
-      timeMs - this.samples[0].time > 1400 &&
+      timeMs - this.samples[0].time >
+        Math.max(1400, this.frameIntervalMs * 2.1) &&
       range < 0.045;
     if (stale || still) {
       this.rpm = 0;

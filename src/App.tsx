@@ -562,6 +562,7 @@ export default function App() {
                 playerCount={playerCount}
                 opponentSpeed={speed2}
                 playerDistances={session.distances}
+                analysisActive={mode === "camera"}
               />
               <div className="scene-fullscreen-setup">
                 <GameSetup {...setupProps} compact />

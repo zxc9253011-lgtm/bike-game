@@ -224,3 +224,30 @@ test("nonfinite inputs and duplicate timestamps cannot manufacture steps or cade
     assert.equal(estimator.update(DOWN, DOWN, invalid).cadence, 0);
   }
 });
+
+test("slow but live inference preserves a complete high knee across long frame intervals", () => {
+  const estimator = new HighKneeEstimator();
+  let reading = estimator.update(DOWN, DOWN, 0, 5000);
+  for (let step = 0; step < 5; step++) {
+    const left = step % 2 === 0;
+    reading = estimator.update(
+      left ? HIGH : DOWN,
+      left ? DOWN : HIGH,
+      (step * 2 + 1) * 1900,
+      5000,
+    );
+    assert.equal(reading.steps, step);
+    reading = estimator.update(DOWN, DOWN, (step * 2 + 2) * 1900, 5000);
+    assert.equal(reading.steps, step + 1);
+    assert.ok(
+      reading.cadence > 0,
+      "a live 1.9-second camera interval must not cancel each raised phase",
+    );
+  }
+  assert.ok(Math.abs(reading.cadence - 30000 / 3800) < 0.001);
+  assert.equal(
+    estimator.update(DOWN, DOWN, 26000, 5000).cadence,
+    0,
+    "a gap beyond the bounded tolerance still discards old motion",
+  );
+});

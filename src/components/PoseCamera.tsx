@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { CadenceEstimator } from "../lib/cadence";
 import { HighKneeEstimator } from "../lib/highKnee";
 import { assetUrl } from "../lib/assets";
+import { PoseFreshness, PoseTimeoutError, poseDeadline } from "../lib/tracking";
 import {
   analyzeLegPose,
   cameraRegion,
@@ -86,7 +87,28 @@ function loadLocalPose(): Promise<PoseConstructor> {
 
 const COLORS = ["#d4ee94", "#8dcaff"] as const;
 const CONNECTIONS = [
+  [0, 1],
+  [1, 2],
+  [2, 3],
+  [3, 7],
+  [0, 4],
+  [4, 5],
+  [5, 6],
+  [6, 8],
+  [9, 10],
   [11, 12],
+  [11, 13],
+  [13, 15],
+  [15, 17],
+  [15, 19],
+  [15, 21],
+  [17, 19],
+  [12, 14],
+  [14, 16],
+  [16, 18],
+  [16, 20],
+  [16, 22],
+  [18, 20],
   [11, 23],
   [12, 24],
   [23, 24],
@@ -94,10 +116,14 @@ const CONNECTIONS = [
   [24, 26],
   [25, 27],
   [26, 28],
+  [27, 29],
+  [29, 31],
   [27, 31],
+  [28, 30],
+  [30, 32],
   [28, 32],
 ];
-const JOINTS = [11, 12, 23, 24, 25, 26, 27, 28, 31, 32];
+const JOINTS = Array.from({ length: 33 }, (_, index) => index);
 const positioningFeedback = (exerciseMode: ExerciseMode): string =>
   exerciseMode === "standing"
     ? "請讓肩膀、髖部與膝蓋入鏡"
@@ -130,7 +156,10 @@ type PoseSession = {
   pending: Promise<void> | null;
   crop: HTMLCanvasElement;
   points?: PosePoint[];
-  lastResult: number;
+  health: PoseFreshness;
+  capturedAt: number;
+  firstSend: boolean;
+  held: boolean;
   imageAspect: number;
 };
 
@@ -156,6 +185,7 @@ export default function PoseCamera({
     blankPlayer(positioningFeedback(exerciseMode)),
     blankPlayer(positioningFeedback(exerciseMode)),
   ]);
+  const highKneeTotals = useRef<[number, number]>([0, 0]);
   const pauseAnalysis = useRef<() => void>(() => undefined);
   const resetAnalysis = useRef<() => void>(() => undefined);
   const [players, setPlayers] = useState<[PlayerAnalysis, PlayerAnalysis]>(
@@ -173,17 +203,28 @@ export default function PoseCamera({
     if (!running) pauseAnalysis.current();
   }, [running]);
   useEffect(() => {
+    // These resets also apply when a source/player change retires the old effect.
+    for (const estimator of seated.current) estimator.reset();
+    for (const estimator of standing.current) estimator.reset();
+    highKneeTotals.current = [0, 0];
     resetAnalysis.current();
   }, [resetKey, exerciseMode]);
 
   useEffect(() => {
     let disposed = false;
     let stopped = false;
+    let recovering = false;
+    let generation = 0;
+    let automaticRecoveries = 0;
     let frame = 0;
     let watchdog = 0;
     let stream: MediaStream | null = null;
+    let Pose: PoseConstructor | null = null;
     let lastVideoTime = -1;
     let lastInference = 0;
+    let observedVideoTime = -1;
+    let lastVideoAdvanceAt = performance.now();
+    let analysisStartedAt = performance.now();
     let currentStatus: TrackingStatus | null = null;
     const sessions: PoseSession[] = Array.from(
       { length: playerCount },
@@ -193,19 +234,28 @@ export default function PoseCamera({
         model: null,
         pending: null,
         crop: document.createElement("canvas"),
-        lastResult: 0,
+        health: new PoseFreshness(),
+        capturedAt: 0,
+        firstSend: true,
+        held: false,
         imageAspect: 4 / 3,
       }),
     );
     for (const estimator of seated.current) estimator.reset();
-    for (const estimator of standing.current) estimator.reset();
+    for (const estimator of standing.current) estimator.suspend();
     analyses.current = [
-      blankPlayer(positioningFeedback(live.current.exerciseMode)),
-      blankPlayer(
-        playerCount === 2
-          ? positioningFeedback(live.current.exerciseMode)
-          : "單人模式",
-      ),
+      {
+        ...blankPlayer(positioningFeedback(live.current.exerciseMode)),
+        highKnees: highKneeTotals.current[0],
+      },
+      {
+        ...blankPlayer(
+          playerCount === 2
+            ? positioningFeedback(live.current.exerciseMode)
+            : "單人模式",
+        ),
+        highKnees: highKneeTotals.current[1],
+      },
     ];
     setErrorMessage("");
 
@@ -246,6 +296,7 @@ export default function PoseCamera({
       if (disposed) return;
       for (const estimator of seated.current) estimator.reset();
       for (const estimator of standing.current) estimator.reset();
+      highKneeTotals.current = [0, 0];
       analyses.current = analyses.current.map((player) => ({
         ...player,
         cadence: 0,
@@ -260,26 +311,14 @@ export default function PoseCamera({
     };
     publish();
 
-    // Each graph owns its own pending operation. Deletion waits for that
-    // operation so changing modes/retrying never closes an active WASM graph.
-    const closeModels = () => {
-      for (const session of sessions) {
-        const retiring = session.model;
-        session.model = null;
-        if (retiring)
-          void Promise.resolve(session.pending)
-            .catch(() => undefined)
-            .then(() => retiring.close())
-            .catch(() => undefined);
-      }
-    };
-    const invalidate = (
+    const suspendMotion = (
       session: PoseSession,
-      feedback = positioningFeedback(live.current.exerciseMode),
+      feedback: string,
+      clearPoints = true,
     ) => {
       seated.current[session.index].reset();
       standing.current[session.index].suspend();
-      session.points = undefined;
+      if (clearPoints) session.points = undefined;
       analyses.current[session.index] = {
         ...analyses.current[session.index],
         cadence: 0,
@@ -288,13 +327,30 @@ export default function PoseCamera({
         feedback,
       };
     };
+    // A deadline stops waiting, not the raw WASM operation. Retiring a graph
+    // must still wait for that original promise, even after its timeout fires.
+    const closeModels = () => {
+      for (const session of sessions) {
+        const retiring = session.model;
+        const rawPending = session.pending;
+        session.model = null;
+        session.pending = null;
+        if (retiring)
+          void Promise.resolve(rawPending)
+            .catch(() => undefined)
+            .then(() => retiring.close())
+            .catch(() => undefined);
+      }
+    };
     const fail = (message: string) => {
       if (disposed || stopped) return;
       stopped = true;
+      generation += 1;
       cancelAnimationFrame(frame);
       window.clearInterval(watchdog);
       setErrorMessage(message);
-      for (const session of sessions) invalidate(session, "攝影機未連線");
+      for (const session of sessions)
+        suspendMotion(session, "動作分析已暫停，請重新連線");
       stream?.getTracks().forEach((track) => {
         track.onended = null;
         track.stop();
@@ -335,6 +391,12 @@ export default function PoseCamera({
         const points = session.points;
         if (!points) continue;
         const mapped = mapLandmarksToFrame(points, session.region);
+        ctx.save();
+        ctx.globalAlpha = session.held
+          ? 0.35
+          : analyses.current[session.index].tracking
+            ? 1
+            : 0.6;
         ctx.strokeStyle = COLORS[session.index];
         ctx.fillStyle = COLORS[session.index];
         ctx.lineWidth = 3.2 * scale;
@@ -378,15 +440,15 @@ export default function PoseCamera({
             hipY,
           );
           ctx.stroke();
-          ctx.setLineDash([]);
         }
+        ctx.restore();
       }
     };
 
     const receiveResult = (session: PoseSession, result: PoseResult) => {
-      if (disposed || stopped) return;
+      if (disposed || stopped || recovering) return;
       const now = performance.now();
-      session.lastResult = now;
+      session.health.observe(session.capturedAt, now);
       const points = result.poseLandmarks;
       const motion = analyzeLegPose(
         points,
@@ -394,47 +456,152 @@ export default function PoseCamera({
         live.current.exerciseMode,
       );
       if (!motion || !points) {
-        invalidate(session);
-        // Keep any confidently visible joints as positioning guidance; an
-        // incomplete pose still never generates cadence or counted steps.
+        const keep = session.health.keepMotion(now);
+        if (!keep)
+          suspendMotion(
+            session,
+            positioningFeedback(live.current.exerciseMode),
+            false,
+          );
+        // Brief partial detections must not erase a complete lift's history.
+        // They never generate speed, even while we retain the phase/skeleton.
+        session.points = points ?? (keep ? session.points : undefined);
+        session.held = !points;
+        analyses.current[session.index] = {
+          ...analyses.current[session.index],
+          cadence: 0,
+          tracking: false,
+          quality: 0,
+          feedback: keep
+            ? "正在重新辨識，請讓膝蓋入鏡"
+            : positioningFeedback(live.current.exerciseMode),
+        };
+      } else {
+        session.health.valid();
         session.points = points;
+        session.held = false;
+        let cadence = 0;
+        let highKnees = highKneeTotals.current[session.index];
+        let feedback = "已暫停";
+        if (live.current.running) {
+          const maxFrameGap = session.health.freshnessMs();
+          if (live.current.exerciseMode === "standing") {
+            const highKnee = standing.current[session.index].update(
+              motion.leftLift,
+              motion.rightLift,
+              session.capturedAt,
+              maxFrameGap,
+            );
+            cadence = highKnee.cadence;
+            highKnees = highKnee.steps;
+            highKneeTotals.current[session.index] = highKnees;
+            feedback =
+              highKnee.feedback === "raise"
+                ? "膝蓋抬到髖部高度"
+                : highKnee.feedback === "lower"
+                  ? "放下抬起的膝蓋"
+                  : "左右交替，做得很好";
+          } else {
+            cadence = seated.current[session.index].update(
+              motion.signal,
+              session.capturedAt,
+              maxFrameGap,
+            );
+            feedback = cadence > 0 ? "持續交替踩踏" : "請交替抬腳踩踏";
+          }
+        }
+        analyses.current[session.index] = {
+          cadence,
+          highKnees,
+          feedback,
+          tracking: true,
+          quality: motion.quality,
+        };
+      }
+      // Publish each person's result immediately. A slower second graph must
+      // not hide the first person's joints until both sends have completed.
+      draw();
+      publish(true);
+    };
+
+    const initializeModels = async (
+      expectedGeneration: number,
+    ): Promise<void> => {
+      if (!Pose) throw new Error("Local pose runtime is unavailable");
+      for (const session of sessions) {
+        if (disposed || stopped || generation !== expectedGeneration) return;
+        session.health = new PoseFreshness();
+        session.firstSend = true;
+        session.held = false;
+        const model = new Pose({
+          locateFile: (file) => assetUrl(`pose/${file}`),
+        });
+        session.model = model;
+        model.setOptions({
+          modelComplexity: 0,
+          smoothLandmarks: true,
+          enableSegmentation: false,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+        model.onResults((result) => {
+          if (generation !== expectedGeneration || session.model !== model)
+            return;
+          receiveResult(session, result);
+        });
+        const operation = model.initialize();
+        session.pending = operation;
+        await poseDeadline(operation, 20000, "辨識模型啟動逾時，請重新連線。");
+        if (disposed || stopped || generation !== expectedGeneration) return;
+        if (session.pending === operation) session.pending = null;
+      }
+      analysisStartedAt = performance.now();
+    };
+
+    const recover = async (error: unknown): Promise<void> => {
+      if (disposed || stopped || recovering) return;
+      recovering = true;
+      generation += 1;
+      cancelAnimationFrame(frame);
+      closeModels();
+      for (const session of sessions)
+        suspendMotion(session, "正在重新啟動動作分析…");
+      draw();
+      publish();
+      if (automaticRecoveries >= 1) {
+        recovering = false;
+        fail(
+          error instanceof PoseTimeoutError
+            ? error.message
+            : "動作分析已中斷，請按重新連線恢復骨架標點。",
+        );
         return;
       }
-      session.points = points;
-      let cadence = 0;
-      let highKnees = analyses.current[session.index].highKnees;
-      let feedback = "已暫停";
-      if (live.current.running) {
-        if (live.current.exerciseMode === "standing") {
-          const highKnee = standing.current[session.index].update(
-            motion.leftLift,
-            motion.rightLift,
-            now,
-          );
-          cadence = highKnee.cadence;
-          highKnees = highKnee.steps;
-          feedback =
-            highKnee.feedback === "raise"
-              ? "膝蓋抬到髖部高度"
-              : highKnee.feedback === "lower"
-                ? "放下抬起的膝蓋"
-                : "左右交替，做得很好";
-        } else {
-          cadence = seated.current[session.index].update(motion.signal, now);
-          feedback = cadence > 0 ? "持續交替踩踏" : "請交替抬腳踩踏";
-        }
+      automaticRecoveries += 1;
+      report("loading");
+      const expectedGeneration = generation;
+      try {
+        await initializeModels(expectedGeneration);
+        if (disposed || stopped || generation !== expectedGeneration) return;
+        lastVideoTime = -1;
+        lastInference = 0;
+        recovering = false;
+        report("positioning");
+        frame = requestAnimationFrame(infer);
+      } catch (recoveryError) {
+        if (disposed || stopped || generation !== expectedGeneration) return;
+        recovering = false;
+        fail(
+          recoveryError instanceof PoseTimeoutError
+            ? recoveryError.message
+            : cameraError(recoveryError),
+        );
       }
-      analyses.current[session.index] = {
-        cadence,
-        highKnees,
-        feedback,
-        tracking: true,
-        quality: motion.quality,
-      };
     };
 
     const infer = async (now: number) => {
-      if (disposed || stopped) return;
+      if (disposed || stopped || recovering) return;
+      const expectedGeneration = generation;
       const video = videoRef.current;
       if (
         video &&
@@ -444,59 +611,76 @@ export default function PoseCamera({
       ) {
         lastVideoTime = video.currentTime;
         lastInference = now;
+        const capturedAt = performance.now();
         try {
-          // Snapshot both halves before inference so both players use the same
-          // camera frame. Raw right -> mirrored left is always player 1.
-          if (playerCount === 2) {
-            for (const session of sessions) {
-              const sourceWidth = video.videoWidth * session.region.width;
-              const sourceHeight = video.videoHeight;
-              const ratio = Math.min(1, 480 / sourceWidth, 640 / sourceHeight);
-              const width = Math.max(1, Math.round(sourceWidth * ratio));
-              const height = Math.max(1, Math.round(sourceHeight * ratio));
-              if (
-                session.crop.width !== width ||
-                session.crop.height !== height
-              ) {
-                session.crop.width = width;
-                session.crop.height = height;
-              }
-              const context = session.crop.getContext("2d");
-              if (!context) throw new Error("Cannot create player camera crop");
-              context.drawImage(
-                video,
-                video.videoWidth * session.region.x,
-                0,
-                sourceWidth,
-                sourceHeight,
-                0,
-                0,
-                width,
-                height,
-              );
-              session.imageAspect = width / height;
-            }
-          } else sessions[0].imageAspect = video.videoWidth / video.videoHeight;
+          // Snapshot every input, including single-player, at a bounded size.
+          // Both players still analyze the same captured camera frame.
           for (const session of sessions) {
-            if (disposed || stopped || !session.model) return;
-            const operation = session.model.send({
-              image: playerCount === 2 ? session.crop : video,
-            });
-            session.pending = operation;
-            await operation;
-            if (session.pending === operation) session.pending = null;
+            const sourceWidth = video.videoWidth * session.region.width;
+            const sourceHeight = video.videoHeight;
+            const ratio = Math.min(
+              1,
+              (playerCount === 2 ? 480 : 640) / sourceWidth,
+              (playerCount === 2 ? 640 : 480) / sourceHeight,
+            );
+            const width = Math.max(1, Math.round(sourceWidth * ratio));
+            const height = Math.max(1, Math.round(sourceHeight * ratio));
+            if (
+              session.crop.width !== width ||
+              session.crop.height !== height
+            ) {
+              session.crop.width = width;
+              session.crop.height = height;
+            }
+            const context = session.crop.getContext("2d");
+            if (!context) throw new Error("Cannot create player camera crop");
+            context.drawImage(
+              video,
+              video.videoWidth * session.region.x,
+              0,
+              sourceWidth,
+              sourceHeight,
+              0,
+              0,
+              width,
+              height,
+            );
+            session.imageAspect = width / height;
+            session.capturedAt = capturedAt;
           }
-          if (!disposed && !stopped) {
-            draw();
-            publish(true);
+          for (const session of sessions) {
+            if (
+              disposed ||
+              stopped ||
+              generation !== expectedGeneration ||
+              !session.model
+            )
+              return;
+            const operation = session.model.send({ image: session.crop });
+            session.pending = operation;
+            await poseDeadline(
+              operation,
+              session.firstSend ? 12000 : 6000,
+              "動作分析回應逾時，請按重新連線恢復。",
+            );
+            if (disposed || stopped || generation !== expectedGeneration)
+              return;
+            if (session.pending === operation) session.pending = null;
+            session.firstSend = false;
           }
         } catch (error) {
-          fail(cameraError(error));
+          if (!disposed && !stopped && generation === expectedGeneration)
+            await recover(error);
           return;
         }
       }
-      // Both graphs are strictly sequential; no graph receives concurrent sends.
-      if (!disposed && !stopped) frame = requestAnimationFrame(infer);
+      if (
+        !disposed &&
+        !stopped &&
+        !recovering &&
+        generation === expectedGeneration
+      )
+        frame = requestAnimationFrame(infer);
     };
 
     const start = async () => {
@@ -522,56 +706,80 @@ export default function PoseCamera({
         if (!video) throw new Error("Camera preview is unavailable");
         video.srcObject = stream;
         await video.play();
-        const Pose = await loadLocalPose();
+        Pose = await loadLocalPose();
         if (disposed || stopped) return;
-        for (const session of sessions) {
+        try {
+          await initializeModels(generation);
           if (disposed || stopped) return;
-          const model = new Pose({
-            locateFile: (file) => assetUrl(`pose/${file}`),
-          });
-          session.model = model;
-          model.setOptions({
-            modelComplexity: 0,
-            smoothLandmarks: true,
-            enableSegmentation: false,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5,
-          });
-          model.onResults((result) => receiveResult(session, result));
-          const initialization = model.initialize();
-          session.pending = initialization;
-          await initialization;
-          if (session.pending === initialization) session.pending = null;
+          report("positioning");
+          frame = requestAnimationFrame(infer);
+        } catch (error) {
+          await recover(error);
         }
         if (disposed || stopped) return;
-        report("positioning");
-        frame = requestAnimationFrame(infer);
         watchdog = window.setInterval(() => {
-          if (disposed || stopped) return;
+          if (disposed || stopped || recovering || document.hidden) return;
           const now = performance.now();
-          let changed = false;
+          const currentVideo = videoRef.current;
+          if (currentVideo && currentVideo.currentTime !== observedVideoTime) {
+            observedVideoTime = currentVideo.currentTime;
+            lastVideoAdvanceAt = now;
+          }
+          if (now - lastVideoAdvanceAt > 3500) {
+            void recover(
+              new PoseTimeoutError("攝影機影像已暫停，請按重新連線恢復。"),
+            );
+            return;
+          }
+          // An active send has its own bounded deadline. Do not erase another
+          // player's completed result merely because this graph is slower.
+          if (sessions.some((session) => session.pending !== null)) {
+            let changed = false;
+            for (const session of sessions) {
+              if (
+                session.health.isStale(now) &&
+                analyses.current[session.index].tracking
+              ) {
+                // A stuck graph must not keep moving a rider from old input.
+                // Keep the last skeleton dimmed while the deadline recovers
+                // the graph; ordinary slow, live results have a larger budget.
+                session.held = true;
+                analyses.current[session.index] = {
+                  ...analyses.current[session.index],
+                  cadence: 0,
+                  tracking: false,
+                  feedback: "分析延遲，正在等待恢復…",
+                };
+                changed = true;
+              }
+            }
+            if (changed) {
+              draw();
+              publish(true);
+            }
+            return;
+          }
           for (const session of sessions) {
             if (
-              session.lastResult &&
-              now - session.lastResult > 1600 &&
-              analyses.current[session.index].tracking
+              session.health.isStale(now) ||
+              (session.health.lastResultAt === null &&
+                now - analysisStartedAt > 12000)
             ) {
-              invalidate(session, "影像暫停，請檢查攝影機");
-              changed = true;
+              void recover(
+                new PoseTimeoutError("人體辨識未持續更新，請按重新連線恢復。"),
+              );
+              return;
             }
-          }
-          if (changed) {
-            draw();
-            publish(true);
           }
         }, 400);
       } catch (error) {
-        fail(cameraError(error));
+        if (!disposed && !stopped) fail(cameraError(error));
       }
     };
     void start();
     return () => {
       disposed = true;
+      generation += 1;
       cancelAnimationFrame(frame);
       window.clearInterval(watchdog);
       stream?.getTracks().forEach((track) => {
@@ -613,6 +821,7 @@ export default function PoseCamera({
             aria-label="鏡像攝影機畫面"
             style={{
               position: "absolute",
+              zIndex: 0,
               inset: 0,
               width: "100%",
               height: "100%",
@@ -626,6 +835,8 @@ export default function PoseCamera({
             aria-label="即時人體關節標記"
             style={{
               position: "absolute",
+              zIndex: 1,
+              pointerEvents: "none",
               inset: 0,
               width: "100%",
               height: "100%",
@@ -646,6 +857,7 @@ export default function PoseCamera({
         aria-hidden="true"
         style={{
           position: "absolute",
+          zIndex: 2,
           inset: 0,
           pointerEvents: "none",
           background:
@@ -657,6 +869,7 @@ export default function PoseCamera({
           aria-hidden="true"
           style={{
             position: "absolute",
+            zIndex: 2,
             left: "50%",
             top: 29,
             bottom: 38,
@@ -668,6 +881,7 @@ export default function PoseCamera({
         className="pose-topline"
         style={{
           position: "absolute",
+          zIndex: 2,
           top: 8,
           left: 8,
           right: 8,
@@ -699,6 +913,7 @@ export default function PoseCamera({
         className="pose-player-labels"
         style={{
           position: "absolute",
+          zIndex: 2,
           top: 27,
           left: 8,
           right: 8,
@@ -731,6 +946,7 @@ export default function PoseCamera({
           role="status"
           style={{
             position: "absolute",
+            zIndex: 2,
             inset: "42% 8px auto",
             textAlign: "center",
             fontSize: 10,
@@ -746,6 +962,7 @@ export default function PoseCamera({
           className="pose-error"
           style={{
             position: "absolute",
+            zIndex: 2,
             inset: "29px 7px 28px",
             display: "flex",
             flexDirection: "column",
@@ -780,6 +997,7 @@ export default function PoseCamera({
         className="pose-footer"
         style={{
           position: "absolute",
+          zIndex: 2,
           bottom: 6,
           left: 7,
           right: 7,
