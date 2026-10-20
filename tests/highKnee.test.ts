@@ -1,0 +1,135 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { HighKneeEstimator } from "../src/lib/highKnee.ts";
+
+const DOWN = -0.55;
+const HIGH = 0.04;
+
+function step(estimator: HighKneeEstimator, side: 0 | 1, finishTime: number) {
+  estimator.update(side === 0 ? HIGH : DOWN, side === 1 ? HIGH : DOWN, finishTime - 200);
+  return estimator.update(DOWN, DOWN, finishTime);
+}
+
+test("counts complete alternating high knees and converts steps to full-turn RPM", () => {
+  const estimator = new HighKneeEstimator();
+  assert.deepEqual(estimator.update(DOWN, DOWN, 0), {
+    cadence: 0,
+    steps: 0,
+    feedback: "raise",
+  });
+  assert.deepEqual(step(estimator, 0, 400), {
+    cadence: 0,
+    steps: 1,
+    feedback: "good",
+  });
+  let result = step(estimator, 1, 900);
+  assert.equal(result.cadence, 60, "120 steps/min is 60 pedal-equivalent RPM");
+  for (let index = 2; index < 10; index++) {
+    result = step(estimator, (index % 2) as 0 | 1, 400 + index * 500);
+  }
+  assert.equal(result.steps, 10);
+  assert.equal(result.cadence, 60);
+});
+
+test("shuffling and lifts below hip-height tolerance do not count", () => {
+  const estimator = new HighKneeEstimator();
+  estimator.update(DOWN, DOWN, 0);
+  for (let index = 0; index < 20; index++) {
+    const time = 200 + index * 400;
+    estimator.update(index % 2 ? DOWN : -0.12, index % 2 ? -0.12 : DOWN, time);
+    assert.equal(estimator.update(DOWN, DOWN, time + 180).steps, 0);
+  }
+});
+
+test("a knee must first be down, then high, then down; holding it high never repeats", () => {
+  const estimator = new HighKneeEstimator();
+  for (let time = 0; time <= 3000; time += 100) {
+    const result = estimator.update(HIGH, DOWN, time);
+    assert.equal(result.steps, 0);
+    assert.equal(result.feedback, "lower");
+  }
+  assert.equal(estimator.update(DOWN, DOWN, 3100).steps, 0);
+  estimator.update(HIGH, DOWN, 3300);
+  for (let time = 3400; time <= 6000; time += 100) {
+    assert.equal(estimator.update(HIGH, DOWN, time).steps, 0);
+  }
+  assert.equal(estimator.update(DOWN, DOWN, 6100).steps, 1);
+  assert.equal(step(estimator, 0, 6600).steps, 1, "the same leg cannot score twice");
+  assert.equal(step(estimator, 1, 7100).steps, 2);
+});
+
+test("both knees rising together do not count as alternating steps", () => {
+  const estimator = new HighKneeEstimator();
+  estimator.update(DOWN, DOWN, 0);
+  estimator.update(HIGH, HIGH, 200);
+  assert.equal(estimator.update(DOWN, DOWN, 400).steps, 0);
+});
+
+test("lowering and raising thresholds have hysteresis", () => {
+  const estimator = new HighKneeEstimator();
+  estimator.update(-0.3, DOWN, 0);
+  estimator.update(-0.08, DOWN, 200);
+  for (let index = 0; index < 10; index++) {
+    assert.equal(estimator.update(index % 2 ? -0.09 : -0.07, DOWN, 250 + index * 30).steps, 0);
+  }
+  assert.equal(estimator.update(-0.3, DOWN, 600).steps, 1);
+});
+
+test("two seconds idle stops cadence while retaining completed steps", () => {
+  const estimator = new HighKneeEstimator();
+  estimator.update(DOWN, DOWN, 0);
+  step(estimator, 0, 400);
+  assert.equal(step(estimator, 1, 900).cadence, 60);
+  for (let time = 1000; time < 2900; time += 100) {
+    assert.equal(estimator.update(DOWN, DOWN, time).steps, 2);
+  }
+  assert.deepEqual(estimator.update(DOWN, DOWN, 2900), {
+    steps: 2,
+    cadence: 0,
+    feedback: "raise",
+  });
+  assert.equal(step(estimator, 0, 3400).cadence, 0);
+  assert.equal(step(estimator, 1, 3900).cadence, 60);
+});
+
+test("tracking gaps and reversed timestamps discard incomplete lifts, preserving the count", () => {
+  for (const resumeTime of [100, 5000]) {
+    const estimator = new HighKneeEstimator();
+    estimator.update(DOWN, DOWN, 0);
+    step(estimator, 0, 400);
+    step(estimator, 1, 900);
+    estimator.update(HIGH, DOWN, 1100);
+    const afterGap = estimator.update(DOWN, DOWN, resumeTime);
+    assert.equal(afterGap.cadence, 0);
+    assert.equal(afterGap.steps, 2);
+    assert.equal(step(estimator, 0, resumeTime + 400).steps, 3);
+  }
+});
+
+test("suspend clears partial motion while reset also clears workout steps", () => {
+  const estimator = new HighKneeEstimator();
+  estimator.update(DOWN, DOWN, 0);
+  step(estimator, 0, 400);
+  estimator.update(DOWN, HIGH, 600);
+  estimator.suspend();
+  assert.equal(estimator.update(DOWN, DOWN, 700).steps, 1);
+  assert.equal(step(estimator, 1, 1100).steps, 2);
+  estimator.reset();
+  assert.deepEqual(estimator.update(DOWN, DOWN, 0), {
+    cadence: 0,
+    steps: 0,
+    feedback: "raise",
+  });
+});
+
+test("nonfinite inputs and duplicate timestamps cannot manufacture steps or cadence", () => {
+  const estimator = new HighKneeEstimator();
+  estimator.update(DOWN, DOWN, 0);
+  assert.equal(estimator.update(HIGH, DOWN, 0).steps, 0);
+  assert.equal(estimator.update(DOWN, DOWN, 100).steps, 0);
+  for (const invalid of [NaN, Infinity, -Infinity]) {
+    assert.equal(estimator.update(invalid, DOWN, 200).cadence, 0);
+    assert.equal(estimator.update(DOWN, invalid, 300).steps, 0);
+    assert.equal(estimator.update(DOWN, DOWN, invalid).cadence, 0);
+  }
+});

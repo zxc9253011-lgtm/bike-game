@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowRight,
   AudioLines,
@@ -7,6 +8,8 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronsDown,
+  ChevronsUp,
   CircleHelp,
   Clock3,
   Compass,
@@ -26,6 +29,8 @@ import {
   Sprout,
   Sun,
   Trees,
+  Trophy,
+  Users,
   Volume2,
   VolumeX,
   Waves,
@@ -33,8 +38,11 @@ import {
   X,
 } from "lucide-react";
 import RideScene from "./components/RideScene";
-import PoseCamera from "./components/PoseCamera";
+import PoseCamera, { type PlayerAnalysis } from "./components/PoseCamera";
+import GameSetup from "./components/GameSetup";
+import RaceHud from "./components/RaceHud";
 import { assetUrl } from "./lib/assets";
+import { advanceRace, createRaceState } from "./lib/race";
 
 type RouteId = "forest" | "coast" | "sunset";
 type Tracking = "demo" | "loading" | "tracking" | "positioning" | "error";
@@ -43,6 +51,10 @@ type RideRecord = {
   seconds: number;
   distance: number;
   route: string;
+  playerCount?: 1 | 2;
+  exerciseMode?: "seated" | "standing";
+  secondDistance?: number;
+  winner?: 1 | 2 | "tie";
 };
 const routes: {
   id: RouteId;
@@ -109,10 +121,36 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [mode, setMode] = useState<"demo" | "camera">("demo");
   const [demoCadence, setDemoCadence] = useState(42);
+  const [demoCadence2, setDemoCadence2] = useState(38);
   const [cameraCadence, setCameraCadence] = useState(0);
   const [tracking, setTracking] = useState<Tracking>("demo");
-  const [elapsed, setElapsed] = useState(0);
-  const [distance, setDistance] = useState(0);
+  const [exerciseMode, setExerciseMode] = useState<"seated" | "standing">(
+    "seated",
+  );
+  const [playerCount, setPlayerCount] = useState<1 | 2>(1);
+  const [raceMeters, setRaceMeters] = useState(100);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [session, setSession] = useState(createRaceState);
+  const [resetKey, setResetKey] = useState(0);
+  const [players, setPlayers] = useState<[PlayerAnalysis, PlayerAnalysis]>([
+    {
+      cadence: 0,
+      tracking: false,
+      quality: 0,
+      feedback: "請讓身體入鏡",
+      highKnees: 0,
+    },
+    {
+      cadence: 0,
+      tracking: false,
+      quality: 0,
+      feedback: "請讓身體入鏡",
+      highKnees: 0,
+    },
+  ]);
+  const [cameraCollapsed, setCameraCollapsed] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [theater, setTheater] = useState(false);
   const [goal, setGoal] = useState(15);
   const [modal, setModal] = useState<
     "guide" | "records" | "finish" | "settings" | null
@@ -127,17 +165,46 @@ export default function App() {
   const audioRef = useRef<AudioContext | null>(null);
   const gainRef = useRef<GainNode | null>(null);
   const selected = routes.find((r) => r.id === route)!;
+  const elapsed = session.elapsed;
+  const distance = session.distances[0] / 1000;
+  const distance2 = session.distances[1] / 1000;
   const cadence = running
     ? mode === "demo"
       ? demoCadence
-      : tracking === "tracking"
+      : players[0].tracking
         ? cameraCadence
         : 0
     : 0;
   const speed = Math.min(30, cadence * 0.28);
+  const cadence2 =
+    running && playerCount === 2
+      ? mode === "demo"
+        ? demoCadence2
+        : players[1].tracking
+          ? players[1].cadence
+          : 0
+      : 0;
+  const speed2 = Math.min(30, cadence2 * 0.28);
+  const raceTitle =
+    session.result?.winner === "tie"
+      ? "兩位玩家平手！"
+      : session.result
+        ? `玩家 ${session.result.winner} 獲勝`
+        : "一起出發，享受這場競賽。";
+  const controlsLocked = running || countdown !== null;
+  const canStart =
+    playerCount === 1 ||
+    mode === "demo" ||
+    players.every((player) => player.tracking);
   const progress = Math.min(1, elapsed / (goal * 60));
   const onCadence = useCallback((rpm: number) => setCameraCadence(rpm), []);
   const onTracking = useCallback((value: Tracking) => setTracking(value), []);
+  const onPlayers = useCallback(
+    (value: [PlayerAnalysis, PlayerAnalysis]) => setPlayers(value),
+    [],
+  );
+  const speedsRef = useRef<[number, number]>([speed, speed2]);
+  speedsRef.current = [speed, speed2];
 
   useEffect(() => {
     if (!running) return;
@@ -146,11 +213,47 @@ export default function App() {
       const now = performance.now();
       const delta = Math.min((now - last) / 1000, 2);
       last = now;
-      setElapsed((value) => value + delta);
-      setDistance((value) => value + (speed / 3600) * delta);
-    }, 200);
+      setSession((value) =>
+        playerCount === 2
+          ? advanceRace(value, speedsRef.current, delta, raceMeters)
+          : {
+              ...value,
+              elapsed: value.elapsed + delta,
+              distances: [
+                value.distances[0] + (speedsRef.current[0] / 3.6) * delta,
+                0,
+              ],
+            },
+      );
+    }, 100);
     return () => clearInterval(timer);
-  }, [running, speed]);
+  }, [running, playerCount, raceMeters]);
+
+  useEffect(() => {
+    if (countdown === null) return;
+    const timer = setTimeout(() => {
+      if (countdown <= 1) {
+        setCountdown(null);
+        setRunning(true);
+      } else setCountdown(countdown - 1);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
+  useEffect(() => {
+    if (session.result && !saved) finishRide();
+  }, [session.result, saved]);
+  useEffect(() => {
+    if (running && mode === "camera" && tracking === "error") {
+      setRunning(false);
+      setToast("攝影機已中斷，旅程已暫停。重新連線後可繼續。");
+    }
+  }, [running, mode, tracking]);
+  useEffect(() => {
+    const changed = () =>
+      setIsFullscreen(document.fullscreenElement === sceneRef.current);
+    document.addEventListener("fullscreenchange", changed);
+    return () => document.removeEventListener("fullscreenchange", changed);
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -159,7 +262,10 @@ export default function App() {
   }, [toast]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setModal(null);
+      if (event.key === "Escape") {
+        setModal(null);
+        setTheater(false);
+      }
     };
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
@@ -167,8 +273,6 @@ export default function App() {
   useEffect(() => {
     if (!modal) return;
     const previousFocus = document.activeElement as HTMLElement | null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const trapFocus = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return;
       const elements = [
@@ -188,11 +292,17 @@ export default function App() {
     };
     document.addEventListener("keydown", trapFocus);
     return () => {
-      document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", trapFocus);
       if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [modal]);
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    if (modal || theater) document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [modal, theater]);
   useEffect(() => {
     if (gainRef.current && audioRef.current)
       gainRef.current.gain.setTargetAtTime(
@@ -242,12 +352,17 @@ export default function App() {
 
   function finishRide() {
     setRunning(false);
+    setCountdown(null);
     if (elapsed > 0 && !saved) {
       const record = {
         date: new Date().toISOString(),
         seconds: Math.floor(elapsed),
         distance,
         route: selected.title,
+        playerCount,
+        exerciseMode,
+        secondDistance: playerCount === 2 ? distance2 : undefined,
+        winner: session.result?.winner,
       };
       const next = [record, ...records].slice(0, 100);
       setRecords(next);
@@ -262,32 +377,95 @@ export default function App() {
   }
   function resetRide() {
     setRunning(false);
-    setElapsed(0);
-    setDistance(0);
+    setCountdown(null);
+    setSession(createRaceState());
+    setResetKey((value) => value + 1);
     setCameraCadence(0);
     setSaved(false);
     setModal(null);
   }
   function toggleRide() {
+    if (countdown !== null) {
+      setCountdown(null);
+      return;
+    }
+    if (running) {
+      setRunning(false);
+      return;
+    }
+    if (!canStart) {
+      setToast("請先讓兩位玩家分別進入鏡頭左右區域。");
+      return;
+    }
     if (saved) {
-      setElapsed(0);
-      setDistance(0);
+      setSession(createRaceState());
+      setResetKey((value) => value + 1);
       setSaved(false);
     }
-    setRunning((value) => !value);
+    if (playerCount === 2 && (saved || elapsed === 0)) setCountdown(3);
+    else setRunning(true);
   }
   async function fullscreen() {
+    if (theater) {
+      setTheater(false);
+      return;
+    }
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
-      else await sceneRef.current?.requestFullscreen();
+      else if (sceneRef.current?.requestFullscreen)
+        await sceneRef.current.requestFullscreen();
+      else setTheater(true);
     } catch {
-      setToast("此瀏覽器不支援全螢幕，可使用瀏覽器的放大功能。");
+      setTheater(true);
     }
   }
+  function changeSetup(change: () => void, message: string) {
+    if (controlsLocked) return;
+    if (elapsed > 0 && !saved) finishRide();
+    resetRide();
+    change();
+    setToast(message);
+  }
   function switchMode(value: "demo" | "camera") {
-    setMode(value);
+    if (mode === value) return;
+    if (playerCount === 2) {
+      if (controlsLocked) {
+        setToast("請先暫停競賽，再切換動作來源。");
+        return;
+      }
+      changeSetup(() => setMode(value), "已切換動作來源，競賽將重新開始。");
+    } else setMode(value);
     setCameraCadence(0);
   }
+
+  const setupProps = {
+    exerciseMode,
+    onExerciseModeChange: (value: "seated" | "standing") => {
+      if (value === exerciseMode) return;
+      changeSetup(
+        () => setExerciseMode(value),
+        value === "standing"
+          ? "已切換站姿高抬膝；膝蓋抬到髖部高度才計分。"
+          : "已切換坐姿踩踏，請坐穩椅子。",
+      );
+    },
+    playerCount,
+    onPlayerCountChange: (value: 1 | 2) => {
+      if (value === playerCount) return;
+      changeSetup(
+        () => setPlayerCount(value),
+        value === 2
+          ? "雙人競賽：畫面左側是玩家 1，右側是玩家 2。"
+          : "已切換單人漫遊。",
+      );
+    },
+    raceMeters,
+    onRaceMetersChange: (value: number) => {
+      if (value === raceMeters) return;
+      changeSetup(() => setRaceMeters(value), `賽程已設定為 ${value} 公尺。`);
+    },
+    locked: controlsLocked,
+  };
 
   return (
     <div className={`app-shell${largeText ? " large-text" : ""}`}>
@@ -350,7 +528,10 @@ export default function App() {
               YOUR EVERYDAY LITTLE ADVENTURE
             </div>
             <h1>
-              坐著動，也能去遠方<span>。</span>
+              {exerciseMode === "standing"
+                ? "站著動，也能去遠方"
+                : "坐著動，也能去遠方"}
+              <span>。</span>
             </h1>
             <p>跟著自己的節奏踩踏，讓每一小步，都有好風景。</p>
           </div>
@@ -367,12 +548,24 @@ export default function App() {
 
         <div className="dashboard-grid">
           <div className="main-column">
+            <GameSetup {...setupProps} />
             <section
-              className={`ride-card route-${route}`}
+              className={`ride-card route-${route}${playerCount === 2 ? " is-duel" : ""}${theater ? " expanded-view" : ""}`}
               ref={sceneRef}
               aria-label="3D 騎行遊戲"
+              data-fullscreen={isFullscreen || theater}
             >
-              <RideScene speed={speed} running={running} route={route} />
+              <RideScene
+                speed={speed}
+                running={running}
+                route={route}
+                playerCount={playerCount}
+                opponentSpeed={speed2}
+                playerDistances={session.distances}
+              />
+              <div className="scene-fullscreen-setup">
+                <GameSetup {...setupProps} compact />
+              </div>
               <div className="scene-top">
                 <div className="scene-location">
                   <span className="scene-kicker">
@@ -383,7 +576,8 @@ export default function App() {
                   <span className="scene-route-label">
                     <selected.icon size={13} />
                     {selected.label}
-                    <span className="scene-dot">·</span>自由騎行
+                    <span className="scene-dot">·</span>
+                    {playerCount === 2 ? "雙人競賽" : "自由騎行"}
                   </span>
                 </div>
                 <div className="scene-tools">
@@ -399,11 +593,91 @@ export default function App() {
                     onClick={() => void fullscreen()}
                     className="scene-icon"
                     aria-label="切換全螢幕"
+                    aria-pressed={isFullscreen || theater}
                   >
                     <Expand size={17} />
                   </button>
                 </div>
               </div>
+              <aside
+                className={`scene-camera${cameraCollapsed ? " is-collapsed" : ""}`}
+                aria-label="畫面內人體偵測"
+              >
+                <div className="scene-camera-heading">
+                  <span>
+                    <Camera size={14} />
+                    人體偵測
+                    <span
+                      className={`camera-status-dot ${tracking === "tracking" ? "detected" : ""}`}
+                    />
+                  </span>
+                  <div>
+                    <button
+                      className="camera-source-button"
+                      onClick={() =>
+                        switchMode(mode === "demo" ? "camera" : "demo")
+                      }
+                      disabled={playerCount === 2 && controlsLocked}
+                      aria-label={
+                        mode === "demo" ? "開啟即時攝影機" : "切回示範模式"
+                      }
+                    >
+                      {mode === "demo" ? "示範" : "即時"}
+                    </button>
+                    <button
+                      onClick={() => setCameraCollapsed((value) => !value)}
+                      aria-label={
+                        cameraCollapsed
+                          ? "展開人體偵測視窗"
+                          : "收合人體偵測視窗"
+                      }
+                    >
+                      {cameraCollapsed ? (
+                        <ChevronsDown size={15} />
+                      ) : (
+                        <ChevronsUp size={15} />
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <div className="camera-viewport">
+                  <PoseCamera
+                    mode={mode}
+                    running={running}
+                    demoCadence={demoCadence}
+                    demoCadence2={demoCadence2}
+                    playerCount={playerCount}
+                    exerciseMode={exerciseMode}
+                    resetKey={resetKey}
+                    onCadence={onCadence}
+                    onTracking={onTracking}
+                    onPlayers={onPlayers}
+                  />
+                </div>
+                <div className="scene-camera-summary" role="status">
+                  {mode === "demo"
+                    ? "示範姿態，尚未使用攝影機"
+                    : tracking === "loading"
+                      ? "正在載入辨識模型…"
+                      : tracking === "error"
+                        ? "攝影機尚未連線"
+                        : playerCount === 2
+                          ? `玩家 1 ${players[0].tracking ? "已辨識" : "未入鏡"} · 玩家 2 ${players[1].tracking ? "已辨識" : "未入鏡"}`
+                          : players[0].tracking
+                            ? "已偵測到你，標點會跟著動作移動"
+                            : "請讓肩膀、膝蓋和雙腳完整入鏡"}
+                </div>
+              </aside>
+              {playerCount === 2 && (
+                <RaceHud
+                  speeds={[speed, speed2]}
+                  distances={session.distances}
+                  targetMeters={raceMeters}
+                  running={running}
+                  countdown={countdown}
+                  result={session.result}
+                />
+              )}
               <div className="scene-status">
                 <span className={running ? "status-dot live" : "status-dot"} />
                 {mode === "demo"
@@ -419,6 +693,8 @@ export default function App() {
                     ? "微風與你同行"
                     : "等你開始踩踏"
                   : "準備好就出發"}
+                <span className="status-separator" />
+                {exerciseMode === "standing" ? "站姿高抬膝" : "坐姿踩踏"}
               </div>
               <div className="scene-bottom">
                 <div className="ride-metrics">
@@ -444,19 +720,24 @@ export default function App() {
                 <button
                   className={`start-button ${running ? "is-running" : ""}`}
                   onClick={toggleRide}
+                  disabled={!running && countdown === null && !canStart}
                 >
                   {running ? (
                     <Pause size={19} fill="currentColor" />
                   ) : (
                     <Play size={19} fill="currentColor" />
                   )}
-                  {running
-                    ? "暫停一下"
-                    : saved
-                      ? "再騎一趟"
-                      : elapsed > 0
-                        ? "繼續騎行"
-                        : "開始騎行"}
+                  {countdown !== null
+                    ? `取消倒數 ${countdown}`
+                    : running
+                      ? "暫停一下"
+                      : saved
+                        ? "再騎一趟"
+                        : elapsed > 0
+                          ? "繼續騎行"
+                          : playerCount === 2
+                            ? "開始競賽"
+                            : "開始騎行"}
                   {!running && <ArrowRight size={18} />}
                 </button>
                 <button
@@ -468,6 +749,14 @@ export default function App() {
                   結束旅程
                 </button>
               </div>
+              {playerCount === 2 &&
+                mode === "camera" &&
+                !canStart &&
+                !running && (
+                  <p className="race-positioning-note">
+                    請先讓兩位玩家完整入鏡，再開始競賽。
+                  </p>
+                )}
             </section>
 
             <section className="routes-section">
@@ -535,7 +824,9 @@ export default function App() {
               <div>
                 <strong>動得舒服，比動得快更重要。</strong>
                 <p>
-                  請坐穩有靠背的椅子，依自己的體力輕鬆踩踏；若感到不適，隨時停下休息。
+                  {exerciseMode === "standing"
+                    ? "請在穩固、無障礙的空間站立，量力交替高抬膝；需要支撐時可扶穩固椅背。"
+                    : "請坐穩有靠背的椅子，依自己的體力輕鬆踩踏；若感到不適，隨時停下休息。"}
                 </p>
               </div>
               <Leaf className="reminder-leaf" size={35} strokeWidth={1.1} />
@@ -543,11 +834,15 @@ export default function App() {
           </div>
 
           <aside className="side-column">
-            <section className="pace-card">
+            <section className="pace-card" data-player="1">
               <div className="card-heading">
                 <h2>
                   <AudioLines size={17} />
-                  你的踩踏節奏
+                  {playerCount === 2
+                    ? "玩家 1 運動節奏"
+                    : exerciseMode === "standing"
+                      ? "你的高抬膝節奏"
+                      : "你的踩踏節奏"}
                 </h2>
                 <span className="live-label">
                   <span />
@@ -555,7 +850,7 @@ export default function App() {
                 </span>
               </div>
               <div className="speed-reading">
-                <strong>{speed.toFixed(1)}</strong>
+                <strong data-metric="speed">{speed.toFixed(1)}</strong>
                 <span>km/h</span>
                 <span className="speed-illustration">
                   <Wind size={27} />
@@ -566,11 +861,11 @@ export default function App() {
               <div className="cadence-reading">
                 <span>
                   <Footprints size={16} />
-                  踩踏頻率
+                  {exerciseMode === "standing" ? "有效抬膝頻率" : "踩踏頻率"}
                 </span>
-                <strong>
-                  {Math.round(cadence)}
-                  <small>rpm</small>
+                <strong data-metric="cadence">
+                  {Math.round(cadence * (exerciseMode === "standing" ? 2 : 1))}
+                  <small>{exerciseMode === "standing" ? "步/分" : "rpm"}</small>
                 </strong>
               </div>
               <div className="pace-bars" aria-hidden="true">
@@ -593,13 +888,50 @@ export default function App() {
                       : "很棒，保持舒服的節奏就好"}
                 <Leaf size={13} />
               </p>
+              {exerciseMode === "standing" && mode === "camera" && (
+                <p className="high-knee-feedback" data-player-feedback="1">
+                  {players[0].feedback} · 有效抬膝 {players[0].highKnees} 次
+                </p>
+              )}
+              {playerCount === 2 && (
+                <div className="second-player-pace" data-player="2">
+                  <div>
+                    <span>
+                      <i />
+                      玩家 2
+                    </span>
+                    <strong data-metric="speed">
+                      {speed2.toFixed(1)}
+                      <small>km/h</small>
+                    </strong>
+                  </div>
+                  <div>
+                    <span>
+                      {exerciseMode === "standing" ? "抬膝頻率" : "踩踏頻率"}
+                    </span>
+                    <strong data-metric="cadence">
+                      {Math.round(
+                        cadence2 * (exerciseMode === "standing" ? 2 : 1),
+                      )}
+                      <small>
+                        {exerciseMode === "standing" ? "步/分" : "rpm"}
+                      </small>
+                    </strong>
+                  </div>
+                  {exerciseMode === "standing" && mode === "camera" && (
+                    <p data-player-feedback="2">
+                      {players[1].feedback} · {players[1].highKnees} 次
+                    </p>
+                  )}
+                </div>
+              )}
             </section>
 
             <section className="camera-card">
               <div className="card-heading">
                 <h2>
                   <Camera size={17} />
-                  動作小視窗
+                  偵測與試玩設定
                 </h2>
                 <span
                   className={`tracking-label ${tracking === "tracking" ? "tracked" : ""}`}
@@ -620,6 +952,7 @@ export default function App() {
                 <button
                   className={mode === "demo" ? "active" : ""}
                   onClick={() => switchMode("demo")}
+                  disabled={playerCount === 2 && controlsLocked}
                 >
                   <Sparkles size={13} />
                   先試玩看看
@@ -627,27 +960,60 @@ export default function App() {
                 <button
                   className={mode === "camera" ? "active" : ""}
                   onClick={() => switchMode("camera")}
+                  disabled={playerCount === 2 && controlsLocked}
                 >
                   <Camera size={13} />
                   使用攝影機
                 </button>
               </div>
-              <div className="camera-viewport">
-                <PoseCamera
-                  mode={mode}
-                  running={running}
-                  demoCadence={demoCadence}
-                  onCadence={onCadence}
-                  onTracking={onTracking}
-                />
+              <div className="tracking-summary-card">
+                <span className="tracking-summary-icon">
+                  {playerCount === 2 ? (
+                    <Users size={24} />
+                  ) : (
+                    <Camera size={24} />
+                  )}
+                </span>
+                <div>
+                  <strong>
+                    {exerciseMode === "standing" ? "站姿高抬膝" : "坐姿踩踏"}
+                    {playerCount === 2 ? " · 雙人競賽" : " · 單人漫遊"}
+                  </strong>
+                  <p>人體標點已放在遊戲畫面右上角，放大後也能看見。</p>
+                </div>
               </div>
+              {mode === "camera" && (
+                <div className="player-tracking-list">
+                  {players.slice(0, playerCount).map((player, index) => (
+                    <div key={index} data-player={index + 1}>
+                      <span
+                        className={player.tracking ? "tracked" : "not-tracked"}
+                      />
+                      <strong>玩家 {index + 1}</strong>
+                      <span>
+                        {player.tracking
+                          ? `已辨識 ${player.quality}%`
+                          : "請完整入鏡"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {mode === "demo" ? (
                 <div className="demo-control">
                   <div>
-                    <label htmlFor="demo-speed">試試不同的踩踏速度</label>
+                    <label htmlFor="demo-speed">
+                      {playerCount === 2
+                        ? "玩家 1 示範速度"
+                        : exerciseMode === "standing"
+                          ? "試試不同的高抬膝速度"
+                          : "試試不同的踩踏速度"}
+                    </label>
                     <span>
-                      {demoCadence}
-                      <small>rpm</small>
+                      {demoCadence * (exerciseMode === "standing" ? 2 : 1)}
+                      <small>
+                        {exerciseMode === "standing" ? "步/分" : "rpm"}
+                      </small>
                     </span>
                   </div>
                   <input
@@ -663,9 +1029,42 @@ export default function App() {
                     aria-label="示範踩踏速度"
                   />
                   <div className="range-labels">
-                    <span>慢慢踩</span>
-                    <span>活力踩</span>
+                    <span>
+                      {exerciseMode === "standing" ? "慢慢抬" : "慢慢踩"}
+                    </span>
+                    <span>
+                      {exerciseMode === "standing" ? "活力抬" : "活力踩"}
+                    </span>
                   </div>
+                  {playerCount === 2 && (
+                    <div className="player-two-demo">
+                      <div>
+                        <label htmlFor="demo-speed-2">玩家 2 示範速度</label>
+                        <span>
+                          {demoCadence2 * (exerciseMode === "standing" ? 2 : 1)}
+                          <small>
+                            {exerciseMode === "standing" ? "步/分" : "rpm"}
+                          </small>
+                        </span>
+                      </div>
+                      <input
+                        id="demo-speed-2"
+                        type="range"
+                        min="0"
+                        max="90"
+                        step="1"
+                        value={demoCadence2}
+                        onChange={(event) =>
+                          setDemoCadence2(Number(event.target.value))
+                        }
+                        aria-label="玩家 2 示範速度"
+                      />
+                      <div className="range-labels">
+                        <span>慢慢動</span>
+                        <span>活力動</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="camera-instruction">
@@ -673,7 +1072,9 @@ export default function App() {
                     <ShieldCheck size={17} />
                   </span>
                   <p>
-                    鏡頭需拍到肩膀、髖部、膝蓋和腳踝。
+                    {playerCount === 2
+                      ? "兩人共用一個鏡頭，各站／坐在畫面左右區域，肩膀到雙腳都要入鏡。"
+                      : "鏡頭需拍到肩膀、髖部、膝蓋和腳踝。"}
                     <br />
                     <small>影像僅在裝置分析，不錄影、不上傳。</small>
                   </p>
@@ -774,277 +1175,323 @@ export default function App() {
         </div>
       )}
 
-      {modal && (
-        <div
-          className="modal-backdrop"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) setModal(null);
-          }}
-        >
-          <section
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="modal-title"
+      {modal &&
+        createPortal(
+          <div
+            className={`modal-backdrop${largeText ? " large-text" : ""}`}
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setModal(null);
+            }}
           >
-            <button
-              className="modal-close icon-button"
-              autoFocus
-              onClick={() => setModal(null)}
-              aria-label="關閉視窗"
+            <section
+              className="modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="modal-title"
             >
-              <X size={20} />
-            </button>
-            {modal === "guide" && (
-              <>
-                <span className="modal-badge">
-                  <Leaf size={22} />
-                </span>
-                <p className="eyebrow">A LITTLE GUIDE FOR YOUR RIDE</p>
-                <h2 id="modal-title">準備好，輕鬆出發。</h2>
-                <p className="modal-intro">不用穿上車鞋，也能騎進好風景。</p>
-                <ol className="guide-steps">
-                  <li>
-                    <span>01</span>
-                    <div>
-                      <h3>坐穩，留一點空間</h3>
-                      <p>
-                        選有靠背、不滑動的穩固椅子，坐好並讓雙腿有安全的活動空間。可請家人在旁協助。
-                      </p>
-                    </div>
-                  </li>
-                  <li>
-                    <span>02</span>
-                    <div>
-                      <h3>打開攝影機，讓雙腿入鏡</h3>
-                      <p>
-                        將鏡頭放在前方，完整拍到肩膀、髖部、膝蓋及腳踝。允許攝影機後，綠色標點會跟著身體移動。需要
-                        HTTPS 或本機環境。
-                      </p>
-                    </div>
-                  </li>
-                  <li>
-                    <span>03</span>
-                    <div>
-                      <h3>按下開始，輪流抬腿踩踏</h3>
-                      <p>
-                        像踩空中腳踏車一樣交替抬腿。持續踩踏數圈後會顯示速度；踩得越快，騎得越快。停下後車子也會慢慢停下。
-                      </p>
-                    </div>
-                  </li>
-                </ol>
-                <div className="guide-note">
-                  <ShieldCheck size={19} />
-                  <p>
-                    以自己的舒適程度為準，不需追求速度。如有疼痛、頭暈或喘不過氣，請停止並尋求協助。本遊戲不作醫療評估。
-                  </p>
-                </div>
-                <button
-                  className="primary-button"
-                  onClick={() => setModal(null)}
-                >
-                  知道了，準備出發
-                  <ArrowRight size={17} />
-                </button>
-              </>
-            )}
-            {modal === "records" && (
-              <>
-                <span className="modal-badge">
-                  <Route size={23} />
-                </span>
-                <p className="eyebrow">EVERY LITTLE RIDE COUNTS</p>
-                <h2 id="modal-title">我的騎行足跡</h2>
-                <p className="modal-intro">
-                  每一段旅程，都值得記下來。紀錄儲存於此瀏覽器。
-                </p>
-                {records.length ? (
-                  <>
-                    <div className="records-totals">
+              <button
+                className="modal-close icon-button"
+                autoFocus
+                onClick={() => setModal(null)}
+                aria-label="關閉視窗"
+              >
+                <X size={20} />
+              </button>
+              {modal === "guide" && (
+                <>
+                  <span className="modal-badge">
+                    <Leaf size={22} />
+                  </span>
+                  <p className="eyebrow">A LITTLE GUIDE FOR YOUR RIDE</p>
+                  <h2 id="modal-title">準備好，輕鬆出發。</h2>
+                  <p className="modal-intro">不用穿上車鞋，也能騎進好風景。</p>
+                  <ol className="guide-steps">
+                    <li>
+                      <span>01</span>
                       <div>
-                        <strong>{records.length}</strong>
-                        <span>趟旅程</span>
+                        <h3>選擇運動方式與玩法</h3>
+                        <p>
+                          坐姿模式請坐穩有靠背的椅子；站姿模式請留足活動空間，交替把膝蓋抬到髖部高度。可選單人漫遊或同畫面的雙人競賽。
+                        </p>
                       </div>
+                    </li>
+                    <li>
+                      <span>02</span>
                       <div>
-                        <strong>
-                          {records
-                            .reduce((sum, item) => sum + item.distance, 0)
-                            .toFixed(2)}
-                        </strong>
-                        <span>總公里</span>
+                        <h3>打開攝影機，讓雙腿入鏡</h3>
+                        <p>
+                          將鏡頭放在前方，完整拍到肩膀、髖部、膝蓋及腳踝。允許攝影機後，綠色標點會跟著身體移動。需要
+                          HTTPS 或本機環境。雙人共用一個鏡頭，畫面左側是綠色玩家
+                          1，右側是藍色玩家 2。右上角小視窗放大後也會持續顯示。
+                        </p>
                       </div>
+                    </li>
+                    <li>
+                      <span>03</span>
                       <div>
-                        <strong>
-                          {Math.floor(
-                            records.reduce(
-                              (sum, item) => sum + item.seconds,
-                              0,
-                            ) / 60,
-                          )}
-                        </strong>
-                        <span>總分鐘</span>
+                        <h3>按下開始，左右交替動起來</h3>
+                        <p>
+                          坐姿像踩空中腳踏車一樣交替抬腿；站姿需完成「抬高、放下」並左右交替才計分。雙人競賽有
+                          3
+                          秒倒數，各自控制一台車，先到終點者獲勝。示範模式可分別調整兩人的速度。
+                        </p>
                       </div>
-                    </div>
-                    <div className="records-list">
-                      {records.map((item, index) => (
-                        <div
-                          className="record-row"
-                          key={`${item.date}-${index}`}
-                        >
-                          <span className="record-icon">
-                            <Bike size={21} />
-                          </span>
-                          <div>
-                            <strong>{item.route}</strong>
-                            <span>
-                              {new Date(item.date).toLocaleString("zh-TW", {
-                                month: "long",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          </div>
-                          <div>
-                            <strong>{item.distance.toFixed(2)} km</strong>
-                            <span>{formatTime(item.seconds)}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="record-footnote">
-                      示範與攝影機模式的旅程皆會保存在此。距離為遊戲中的虛擬里程。
+                    </li>
+                  </ol>
+                  <div className="guide-note">
+                    <ShieldCheck size={19} />
+                    <p>
+                      以自己的舒適程度為準，不需追求速度。如有疼痛、頭暈或喘不過氣，請停止並尋求協助。本遊戲不作醫療評估。
                     </p>
-                  </>
-                ) : (
-                  <div className="empty-records">
-                    <Bike size={48} strokeWidth={1.2} />
-                    <h3>第一段好風景，正等著你。</h3>
-                    <p>完成騎行後按「結束旅程」，足跡就會留在這裡。</p>
+                  </div>
+                  <button
+                    className="primary-button"
+                    onClick={() => setModal(null)}
+                  >
+                    知道了，準備出發
+                    <ArrowRight size={17} />
+                  </button>
+                </>
+              )}
+              {modal === "records" && (
+                <>
+                  <span className="modal-badge">
+                    <Route size={23} />
+                  </span>
+                  <p className="eyebrow">EVERY LITTLE RIDE COUNTS</p>
+                  <h2 id="modal-title">我的騎行足跡</h2>
+                  <p className="modal-intro">
+                    每一段旅程，都值得記下來。紀錄儲存於此瀏覽器。
+                  </p>
+                  {records.length ? (
+                    <>
+                      <div className="records-totals">
+                        <div>
+                          <strong>{records.length}</strong>
+                          <span>趟旅程</span>
+                        </div>
+                        <div>
+                          <strong>
+                            {records
+                              .reduce((sum, item) => sum + item.distance, 0)
+                              .toFixed(2)}
+                          </strong>
+                          <span>總公里</span>
+                        </div>
+                        <div>
+                          <strong>
+                            {Math.floor(
+                              records.reduce(
+                                (sum, item) => sum + item.seconds,
+                                0,
+                              ) / 60,
+                            )}
+                          </strong>
+                          <span>總分鐘</span>
+                        </div>
+                      </div>
+                      <div className="records-list">
+                        {records.map((item, index) => (
+                          <div
+                            className="record-row"
+                            key={`${item.date}-${index}`}
+                          >
+                            <span className="record-icon">
+                              <Bike size={21} />
+                            </span>
+                            <div>
+                              <strong>
+                                {item.route}
+                                {item.playerCount === 2 ? " · 雙人競賽" : ""}
+                              </strong>
+                              <span>
+                                {new Date(item.date).toLocaleString("zh-TW", {
+                                  month: "long",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            </div>
+                            <div>
+                              <strong>
+                                {item.playerCount === 2
+                                  ? `P1 ${Math.round(item.distance * 1000)}m / P2 ${Math.round((item.secondDistance ?? 0) * 1000)}m`
+                                  : `${item.distance.toFixed(2)} km`}
+                              </strong>
+                              <span>{formatTime(item.seconds)}</span>
+                              {item.exerciseMode && (
+                                <span>
+                                  {item.exerciseMode === "standing"
+                                    ? "站姿高抬膝"
+                                    : "坐姿踩踏"}
+                                  {item.winner
+                                    ? item.winner === "tie"
+                                      ? " · 平手"
+                                      : ` · 玩家 ${item.winner} 獲勝`
+                                    : ""}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="record-footnote">
+                        示範與攝影機模式的旅程皆會保存在此。距離為遊戲中的虛擬里程。
+                      </p>
+                    </>
+                  ) : (
+                    <div className="empty-records">
+                      <Bike size={48} strokeWidth={1.2} />
+                      <h3>第一段好風景，正等著你。</h3>
+                      <p>完成騎行後按「結束旅程」，足跡就會留在這裡。</p>
+                      <button
+                        className="primary-button"
+                        onClick={() => setModal(null)}
+                      >
+                        去騎一會兒
+                        <ArrowRight size={17} />
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+              {modal === "finish" && (
+                <>
+                  <span className="modal-badge finish-badge">
+                    {playerCount === 2 ? (
+                      <Trophy size={25} />
+                    ) : (
+                      <Flag size={25} />
+                    )}
+                  </span>
+                  <p className="eyebrow">YOU DID SOMETHING GOOD TODAY</p>
+                  <h2 id="modal-title">
+                    {playerCount === 2
+                      ? session.result
+                        ? raceTitle
+                        : "雙人騎行已結束"
+                      : "把這份好心情，帶回生活。"}
+                  </h2>
+                  <p className="modal-intro">
+                    {playerCount === 2
+                      ? "謝謝兩位一起動起來，每一段前進都值得掌聲。"
+                      : "今天的你很棒，謝謝自己願意動一動。"}
+                  </p>
+                  <div className="finish-scene">
+                    <Sprout size={65} strokeWidth={1.2} />
+                    <span>旅程已儲存</span>
+                  </div>
+                  <div className="records-totals">
+                    <div>
+                      <strong>
+                        {playerCount === 2
+                          ? Math.round(distance * 1000)
+                          : distance.toFixed(2)}
+                      </strong>
+                      <span>{playerCount === 2 ? "玩家 1 公尺" : "公里"}</span>
+                    </div>
+                    <div>
+                      <strong>{formatTime(elapsed)}</strong>
+                      <span>騎行時間</span>
+                    </div>
+                    <div>
+                      <strong>
+                        {playerCount === 2
+                          ? Math.round(distance2 * 1000)
+                          : `${Math.round(progress * 100)}%`}
+                      </strong>
+                      <span>
+                        {playerCount === 2 ? "玩家 2 公尺" : "目標完成"}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="finish-note">
+                    喝口水，讓身體休息一下。
+                    <br />
+                    {mode === "demo"
+                      ? "本次為示範騎行，里程為虛擬模擬。"
+                      : "騎行距離為依踩踏節奏推估的遊戲里程。"}
+                  </p>
+                  <button className="primary-button" onClick={resetRide}>
+                    <RotateCcw size={17} />
+                    開始一段新旅程
+                  </button>
+                </>
+              )}
+              {modal === "settings" && (
+                <>
+                  <span className="modal-badge">
+                    <Settings2 size={23} />
+                  </span>
+                  <p className="eyebrow">MAKE YOURSELF COMFORTABLE</p>
+                  <h2 id="modal-title">照你的步調就好。</h2>
+                  <div className="setting-row">
+                    <div>
+                      <h3>自然環境音</h3>
+                      <p>騎行時，讓輕柔風聲陪伴你。</p>
+                    </div>
                     <button
-                      className="primary-button"
-                      onClick={() => setModal(null)}
+                      className={`toggle ${!muted ? "on" : ""}`}
+                      role="switch"
+                      aria-checked={!muted}
+                      aria-label="自然環境音"
+                      onClick={() => void toggleSound()}
                     >
-                      去騎一會兒
-                      <ArrowRight size={17} />
+                      <span />
                     </button>
                   </div>
-                )}
-              </>
-            )}
-            {modal === "finish" && (
-              <>
-                <span className="modal-badge finish-badge">
-                  <Flag size={25} />
-                </span>
-                <p className="eyebrow">YOU DID SOMETHING GOOD TODAY</p>
-                <h2 id="modal-title">把這份好心情，帶回生活。</h2>
-                <p className="modal-intro">
-                  今天的你很棒，謝謝自己願意動一動。
-                </p>
-                <div className="finish-scene">
-                  <Sprout size={65} strokeWidth={1.2} />
-                  <span>旅程已儲存</span>
-                </div>
-                <div className="records-totals">
-                  <div>
-                    <strong>{distance.toFixed(2)}</strong>
-                    <span>公里</span>
+                  <div className="setting-row">
+                    <div>
+                      <h3>友善大字模式</h3>
+                      <p>放大主要操作與提示文字，看得更輕鬆。</p>
+                    </div>
+                    <button
+                      className={`toggle ${largeText ? "on" : ""}`}
+                      role="switch"
+                      aria-checked={largeText}
+                      aria-label="友善大字模式"
+                      onClick={() => setLargeText((value) => !value)}
+                    >
+                      <span />
+                    </button>
                   </div>
-                  <div>
-                    <strong>{formatTime(elapsed)}</strong>
-                    <span>騎行時間</span>
+                  <div className="setting-row">
+                    <div>
+                      <h3>騎行目標</h3>
+                      <p>目標達成後仍可繼續自由騎行。</p>
+                    </div>
+                    <select
+                      value={goal}
+                      onChange={(event) => setGoal(Number(event.target.value))}
+                      aria-label="設定騎行目標"
+                    >
+                      {[5, 10, 15, 20, 30].map((n) => (
+                        <option key={n} value={n}>
+                          {n} 分鐘
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  <div>
-                    <strong>{Math.round(progress * 100)}%</strong>
-                    <span>目標完成</span>
-                  </div>
-                </div>
-                <p className="finish-note">
-                  喝口水，讓身體休息一下。
-                  <br />
-                  {mode === "demo"
-                    ? "本次為示範騎行，里程為虛擬模擬。"
-                    : "騎行距離為依踩踏節奏推估的遊戲里程。"}
-                </p>
-                <button className="primary-button" onClick={resetRide}>
-                  <RotateCcw size={17} />
-                  開始一段新旅程
-                </button>
-              </>
-            )}
-            {modal === "settings" && (
-              <>
-                <span className="modal-badge">
-                  <Settings2 size={23} />
-                </span>
-                <p className="eyebrow">MAKE YOURSELF COMFORTABLE</p>
-                <h2 id="modal-title">照你的步調就好。</h2>
-                <div className="setting-row">
-                  <div>
-                    <h3>自然環境音</h3>
-                    <p>騎行時，讓輕柔風聲陪伴你。</p>
+                  <div className="guide-note">
+                    <ShieldCheck size={19} />
+                    <p>
+                      攝影機影像在你的裝置即時分析，不會傳送至伺服器。切換回示範模式便會關閉攝影機。
+                    </p>
                   </div>
                   <button
-                    className={`toggle ${!muted ? "on" : ""}`}
-                    role="switch"
-                    aria-checked={!muted}
-                    aria-label="自然環境音"
-                    onClick={() => void toggleSound()}
+                    className="primary-button"
+                    onClick={() => setModal(null)}
                   >
-                    <span />
+                    設定完成
+                    <Check size={17} />
                   </button>
-                </div>
-                <div className="setting-row">
-                  <div>
-                    <h3>友善大字模式</h3>
-                    <p>放大主要操作與提示文字，看得更輕鬆。</p>
-                  </div>
-                  <button
-                    className={`toggle ${largeText ? "on" : ""}`}
-                    role="switch"
-                    aria-checked={largeText}
-                    aria-label="友善大字模式"
-                    onClick={() => setLargeText((value) => !value)}
-                  >
-                    <span />
-                  </button>
-                </div>
-                <div className="setting-row">
-                  <div>
-                    <h3>騎行目標</h3>
-                    <p>目標達成後仍可繼續自由騎行。</p>
-                  </div>
-                  <select
-                    value={goal}
-                    onChange={(event) => setGoal(Number(event.target.value))}
-                    aria-label="設定騎行目標"
-                  >
-                    {[5, 10, 15, 20, 30].map((n) => (
-                      <option key={n} value={n}>
-                        {n} 分鐘
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="guide-note">
-                  <ShieldCheck size={19} />
-                  <p>
-                    攝影機影像在你的裝置即時分析，不會傳送至伺服器。切換回示範模式便會關閉攝影機。
-                  </p>
-                </div>
-                <button
-                  className="primary-button"
-                  onClick={() => setModal(null)}
-                >
-                  設定完成
-                  <Check size={17} />
-                </button>
-              </>
-            )}
-          </section>
-        </div>
-      )}
+                </>
+              )}
+            </section>
+          </div>,
+          document.fullscreenElement || document.body,
+        )}
     </div>
   );
 }

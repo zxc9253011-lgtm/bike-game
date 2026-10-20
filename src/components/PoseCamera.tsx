@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { CadenceEstimator } from "../lib/cadence";
+import { HighKneeEstimator } from "../lib/highKnee";
 import { assetUrl } from "../lib/assets";
+import {
+  analyzeLegPose,
+  cameraRegion,
+  mapLandmarksToFrame,
+  visiblePoint,
+} from "../lib/motion";
+import type { CameraRegion, PosePoint } from "../lib/motion";
 
 type TrackingStatus = "demo" | "loading" | "tracking" | "positioning" | "error";
-type Point = {
-  x: number;
-  y: number;
-  z?: number;
-  visibility?: number;
-  presence?: number;
-};
-type PoseResult = { poseLandmarks?: Point[] };
+type ExerciseMode = "seated" | "standing";
+type PoseResult = { poseLandmarks?: PosePoint[] };
 type LocalPose = {
   setOptions: (options: {
     modelComplexity: number;
@@ -21,7 +23,9 @@ type LocalPose = {
   }) => void;
   onResults: (callback: (result: PoseResult) => void) => void;
   initialize: () => Promise<void>;
-  send: (input: { image: HTMLVideoElement }) => Promise<void>;
+  send: (input: {
+    image: HTMLVideoElement | HTMLCanvasElement;
+  }) => Promise<void>;
   close: () => Promise<void>;
 };
 type PoseConstructor = new (config: {
@@ -32,6 +36,27 @@ declare global {
     Pose?: PoseConstructor;
   }
 }
+
+export type PlayerAnalysis = {
+  cadence: number;
+  tracking: boolean;
+  quality: number;
+  feedback: string;
+  highKnees: number;
+};
+
+export type PoseCameraProps = {
+  mode: "demo" | "camera";
+  running: boolean;
+  demoCadence: number;
+  onCadence: (rpm: number) => void;
+  onTracking: (status: TrackingStatus) => void;
+  playerCount?: 1 | 2;
+  exerciseMode?: ExerciseMode;
+  demoCadence2?: number;
+  onPlayers?: (players: [PlayerAnalysis, PlayerAnalysis]) => void;
+  resetKey?: number;
+};
 
 let localPoseScript: Promise<PoseConstructor> | null = null;
 function loadLocalPose(): Promise<PoseConstructor> {
@@ -59,14 +84,7 @@ function loadLocalPose(): Promise<PoseConstructor> {
   return localPoseScript;
 }
 
-export type PoseCameraProps = {
-  mode: "demo" | "camera";
-  running: boolean;
-  demoCadence: number;
-  onCadence: (rpm: number) => void;
-  onTracking: (status: TrackingStatus) => void;
-};
-
+const COLORS = ["#d4ee94", "#8dcaff"] as const;
 const CONNECTIONS = [
   [11, 12],
   [11, 23],
@@ -80,32 +98,37 @@ const CONNECTIONS = [
   [28, 32],
 ];
 const JOINTS = [11, 12, 23, 24, 25, 26, 27, 28, 31, 32];
-const LEG_POINTS = [23, 24, 25, 26, 27, 28];
-
-function visible(point: Point | undefined, confidence = 0.5): point is Point {
-  return (
-    !!point &&
-    (point.visibility ?? 0) >= confidence &&
-    (point.presence ?? 1) >= confidence &&
-    point.x > 0.015 &&
-    point.x < 0.985 &&
-    point.y > 0.015 &&
-    point.y < 0.985
-  );
-}
+const blankPlayer = (feedback = "請讓肩膀到雙腳入鏡"): PlayerAnalysis => ({
+  cadence: 0,
+  tracking: false,
+  quality: 0,
+  feedback,
+  highKnees: 0,
+});
 
 function cameraError(error: unknown): string {
   const name = error instanceof Error ? error.name : "";
   if (name === "NotAllowedError" || name === "PermissionDeniedError")
-    return "攝影機權限未開啟，請允許此網站使用攝影機後再試一次。";
+    return "請允許此網站使用攝影機後重試。";
   if (name === "NotFoundError" || name === "DevicesNotFoundError")
-    return "找不到攝影機，請連接攝影機後再試一次。";
+    return "找不到攝影機，請連接攝影機後重試。";
   if (name === "NotReadableError" || name === "TrackStartError")
-    return "攝影機正被其他程式使用，請關閉其他視訊程式後再試一次。";
+    return "攝影機正被其他程式使用，請關閉其他視訊程式後重試。";
   if (name === "SecurityError")
     return "請使用 HTTPS 或 localhost 開啟遊戲，才能使用攝影機。";
-  return "無法啟動動作分析，請確認攝影機和本機辨識模型可用，再試一次。";
+  return "無法啟動動作分析，請確認攝影機和本機辨識模型可用後重試。";
 }
+
+type PoseSession = {
+  index: 0 | 1;
+  region: CameraRegion;
+  model: LocalPose | null;
+  pending: Promise<void> | null;
+  crop: HTMLCanvasElement;
+  points?: PosePoint[];
+  lastResult: number;
+  imageAspect: number;
+};
 
 export default function PoseCamera({
   mode,
@@ -113,45 +136,70 @@ export default function PoseCamera({
   demoCadence,
   onCadence,
   onTracking,
+  playerCount = 1,
+  exerciseMode = "seated",
+  demoCadence2 = demoCadence,
+  onPlayers,
+  resetKey = 0,
 }: PoseCameraProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const callbacks = useRef({ onCadence, onTracking });
-  const runningRef = useRef(running);
-  const estimator = useRef(new CadenceEstimator());
+  const callbacks = useRef({ onCadence, onTracking, onPlayers });
+  const live = useRef({ running, exerciseMode });
+  const seated = useRef([new CadenceEstimator(), new CadenceEstimator()]);
+  const standing = useRef([new HighKneeEstimator(), new HighKneeEstimator()]);
+  const analyses = useRef<[PlayerAnalysis, PlayerAnalysis]>([
+    blankPlayer(),
+    blankPlayer(),
+  ]);
+  const pauseAnalysis = useRef<() => void>(() => undefined);
+  const resetAnalysis = useRef<() => void>(() => undefined);
+  const [players, setPlayers] = useState<[PlayerAnalysis, PlayerAnalysis]>(
+    analyses.current,
+  );
   const [status, setStatus] = useState<TrackingStatus>(
     mode === "demo" ? "demo" : "loading",
   );
   const [errorMessage, setErrorMessage] = useState("");
   const [retry, setRetry] = useState(0);
-  const [quality, setQuality] = useState(0);
-  callbacks.current = { onCadence, onTracking };
-  runningRef.current = running;
+  callbacks.current = { onCadence, onTracking, onPlayers };
+  live.current = { running, exerciseMode };
 
   useEffect(() => {
-    if (!running) {
-      estimator.current.reset();
-      callbacks.current.onCadence(0);
-    }
+    if (!running) pauseAnalysis.current();
   }, [running]);
+  useEffect(() => {
+    resetAnalysis.current();
+  }, [resetKey, exerciseMode]);
 
   useEffect(() => {
     let disposed = false;
     let stopped = false;
     let frame = 0;
+    let watchdog = 0;
     let stream: MediaStream | null = null;
-    let pose: LocalPose | null = null;
-    let pendingOperation: Promise<void> | null = null;
     let lastVideoTime = -1;
     let lastInference = 0;
-    let lastSeen = 0;
-    let lastQualityUpdate = 0;
-    let lastResultTime = 0;
     let currentStatus: TrackingStatus | null = null;
-    estimator.current.reset();
+    const sessions: PoseSession[] = Array.from(
+      { length: playerCount },
+      (_, index) => ({
+        index: index as 0 | 1,
+        region: cameraRegion(index as 0 | 1, playerCount),
+        model: null,
+        pending: null,
+        crop: document.createElement("canvas"),
+        lastResult: 0,
+        imageAspect: 4 / 3,
+      }),
+    );
+    for (const estimator of seated.current) estimator.reset();
+    for (const estimator of standing.current) estimator.reset();
+    analyses.current = [
+      blankPlayer(),
+      blankPlayer(playerCount === 2 ? undefined : "單人模式"),
+    ];
     setErrorMessage("");
-    setQuality(0);
-    callbacks.current.onCadence(0);
 
     const report = (next: TrackingStatus) => {
       if (disposed || next === currentStatus) return;
@@ -159,19 +207,101 @@ export default function PoseCamera({
       setStatus(next);
       callbacks.current.onTracking(next);
     };
+    const publish = (updateStatus = false) => {
+      if (disposed) return;
+      const snapshot: [PlayerAnalysis, PlayerAnalysis] = [
+        { ...analyses.current[0] },
+        { ...analyses.current[1] },
+      ];
+      setPlayers(snapshot);
+      callbacks.current.onCadence(snapshot[0].cadence);
+      callbacks.current.onPlayers?.(snapshot);
+      if (updateStatus)
+        report(
+          snapshot.slice(0, playerCount).some((player) => player.tracking)
+            ? "tracking"
+            : "positioning",
+        );
+    };
+    pauseAnalysis.current = () => {
+      if (disposed) return;
+      for (const estimator of seated.current) estimator.reset();
+      for (const estimator of standing.current) estimator.suspend();
+      analyses.current = analyses.current.map((player) => ({
+        ...player,
+        cadence: 0,
+        feedback: player.tracking ? "已暫停" : player.feedback,
+      })) as [PlayerAnalysis, PlayerAnalysis];
+      publish();
+    };
+    resetAnalysis.current = () => {
+      if (disposed) return;
+      for (const estimator of seated.current) estimator.reset();
+      for (const estimator of standing.current) estimator.reset();
+      analyses.current = analyses.current.map((player) => ({
+        ...player,
+        cadence: 0,
+        highKnees: 0,
+        feedback: player.tracking
+          ? live.current.exerciseMode === "standing"
+            ? "膝蓋抬到髖部高度"
+            : "請交替抬腳踩踏"
+          : player.feedback,
+      })) as [PlayerAnalysis, PlayerAnalysis];
+      publish();
+    };
+    publish();
 
-    // Never delete the WASM graph while an asynchronous inference is using it.
-    const closePose = () => {
-      const retiring = pose;
-      pose = null;
-      if (retiring)
-        void Promise.resolve(pendingOperation)
-          .catch(() => undefined)
-          .then(() => retiring.close())
-          .catch(() => undefined);
+    // Each graph owns its own pending operation. Deletion waits for that
+    // operation so changing modes/retrying never closes an active WASM graph.
+    const closeModels = () => {
+      for (const session of sessions) {
+        const retiring = session.model;
+        session.model = null;
+        if (retiring)
+          void Promise.resolve(session.pending)
+            .catch(() => undefined)
+            .then(() => retiring.close())
+            .catch(() => undefined);
+      }
+    };
+    const invalidate = (
+      session: PoseSession,
+      feedback = "請讓肩膀到雙腳入鏡",
+    ) => {
+      seated.current[session.index].reset();
+      standing.current[session.index].suspend();
+      session.points = undefined;
+      analyses.current[session.index] = {
+        ...analyses.current[session.index],
+        cadence: 0,
+        tracking: false,
+        quality: 0,
+        feedback,
+      };
+    };
+    const fail = (message: string) => {
+      if (disposed || stopped) return;
+      stopped = true;
+      cancelAnimationFrame(frame);
+      window.clearInterval(watchdog);
+      setErrorMessage(message);
+      for (const session of sessions) invalidate(session, "攝影機未連線");
+      stream?.getTracks().forEach((track) => {
+        track.onended = null;
+        track.stop();
+      });
+      closeModels();
+      publish();
+      report("error");
     };
 
     if (mode === "demo") {
+      analyses.current = [
+        blankPlayer("示範・非即時影像"),
+        blankPlayer("示範・非即時影像"),
+      ];
+      publish();
       report("demo");
       return () => {
         disposed = true;
@@ -179,238 +309,283 @@ export default function PoseCamera({
     }
 
     report("loading");
-    const draw = (points: Point[] | undefined) => {
+    const draw = () => {
       const canvas = canvasRef.current;
       const video = videoRef.current;
       const ctx = canvas?.getContext("2d");
       if (!canvas || !video || !ctx) return;
-      if (
-        canvas.width !== video.videoWidth ||
-        canvas.height !== video.videoHeight
-      ) {
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 480;
+      const width = video.videoWidth || 960;
+      const height = video.videoHeight || 720;
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
       }
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (!points) return;
-      const scale = canvas.width / 640;
+      ctx.clearRect(0, 0, width, height);
+      const scale = width / 640;
       ctx.lineCap = "round";
-      ctx.lineWidth = 3.2 * scale;
-      for (const [a, b] of CONNECTIONS) {
-        if (!visible(points[a], 0.35) || !visible(points[b], 0.35)) continue;
-        ctx.strokeStyle = a % 2 ? "#d8f28d" : "#9ce4d2";
-        ctx.shadowColor = ctx.strokeStyle;
-        ctx.shadowBlur = 8 * scale;
-        ctx.beginPath();
-        ctx.moveTo(points[a].x * canvas.width, points[a].y * canvas.height);
-        ctx.lineTo(points[b].x * canvas.width, points[b].y * canvas.height);
-        ctx.stroke();
-      }
-      ctx.shadowBlur = 0;
-      for (const joint of JOINTS) {
-        if (!visible(points[joint], 0.35)) continue;
-        ctx.beginPath();
-        ctx.arc(
-          points[joint].x * canvas.width,
-          points[joint].y * canvas.height,
-          5.5 * scale,
-          0,
-          Math.PI * 2,
-        );
-        ctx.fillStyle = joint % 2 ? "#e0f69e" : "#a7eddd";
-        ctx.fill();
-        ctx.strokeStyle = "#24392e";
-        ctx.lineWidth = 1.6 * scale;
-        ctx.stroke();
+      for (const session of sessions) {
+        const points = session.points;
+        if (!points) continue;
+        const mapped = mapLandmarksToFrame(points, session.region);
+        ctx.strokeStyle = COLORS[session.index];
+        ctx.fillStyle = COLORS[session.index];
+        ctx.lineWidth = 3.2 * scale;
+        ctx.shadowColor = COLORS[session.index];
+        ctx.shadowBlur = 5 * scale;
+        for (const [a, b] of CONNECTIONS) {
+          if (!visiblePoint(points[a], 0.35) || !visiblePoint(points[b], 0.35))
+            continue;
+          ctx.beginPath();
+          ctx.moveTo(mapped[a].x * width, mapped[a].y * height);
+          ctx.lineTo(mapped[b].x * width, mapped[b].y * height);
+          ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+        for (const joint of JOINTS) {
+          if (!visiblePoint(points[joint], 0.35)) continue;
+          ctx.beginPath();
+          ctx.arc(
+            mapped[joint].x * width,
+            mapped[joint].y * height,
+            4.8 * scale,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+        }
+        if (
+          live.current.exerciseMode === "standing" &&
+          analyses.current[session.index].tracking
+        ) {
+          const hipY = ((mapped[23].y + mapped[24].y) / 2) * height;
+          ctx.setLineDash([5 * scale, 4 * scale]);
+          ctx.lineWidth = 1.2 * scale;
+          ctx.beginPath();
+          ctx.moveTo(
+            (session.region.x + session.region.width * 0.12) * width,
+            hipY,
+          );
+          ctx.lineTo(
+            (session.region.x + session.region.width * 0.88) * width,
+            hipY,
+          );
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
       }
     };
 
-    const receiveResult = (result: PoseResult) => {
-      if (disposed) return;
+    const receiveResult = (session: PoseSession, result: PoseResult) => {
+      if (disposed || stopped) return;
       const now = performance.now();
-      lastResultTime = now;
+      session.lastResult = now;
       const points = result.poseLandmarks;
-      draw(points);
-      const legsVisible =
-        !!points && LEG_POINTS.every((index) => visible(points[index]));
-      const shouldersVisible =
-        !!points && visible(points[11], 0.4) && visible(points[12], 0.4);
-      if (legsVisible && shouldersVisible) {
-        const torso = Math.hypot(
-          (points[11].x + points[12].x - points[23].x - points[24].x) / 2,
-          (points[11].y + points[12].y - points[23].y - points[24].y) / 2,
-        );
-        if (torso > 0.07) {
-          report("tracking");
-          lastSeen = now;
-          // Relative lift cancels whole-body translation and camera scale.
-          const leftLift =
-            points[23].y - (points[25].y * 0.6 + points[27].y * 0.4);
-          const rightLift =
-            points[24].y - (points[26].y * 0.6 + points[28].y * 0.4);
-          callbacks.current.onCadence(
-            runningRef.current
-              ? estimator.current.update((leftLift - rightLift) / torso, now)
-              : 0,
-          );
-          if (now - lastQualityUpdate > 700) {
-            setQuality(
-              Math.round(
-                (LEG_POINTS.reduce(
-                  (total, index) => total + (points[index].visibility ?? 0),
-                  0,
-                ) /
-                  LEG_POINTS.length) *
-                  100,
-              ),
-            );
-            lastQualityUpdate = now;
-          }
-        } else {
-          report("positioning");
-          callbacks.current.onCadence(0);
-          if (now - lastSeen > 600) estimator.current.reset();
-        }
-      } else {
-        report("positioning");
-        callbacks.current.onCadence(0);
-        if (now - lastSeen > 600) estimator.current.reset();
+      const motion = analyzeLegPose(points, session.imageAspect);
+      if (!motion || !points) {
+        invalidate(session);
+        // Keep any confidently visible joints as positioning guidance; an
+        // incomplete pose still never generates cadence or counted steps.
+        session.points = points;
+        return;
       }
+      session.points = points;
+      let cadence = 0;
+      let highKnees = analyses.current[session.index].highKnees;
+      let feedback = "已暫停";
+      if (live.current.running) {
+        if (live.current.exerciseMode === "standing") {
+          const highKnee = standing.current[session.index].update(
+            motion.leftLift,
+            motion.rightLift,
+            now,
+          );
+          cadence = highKnee.cadence;
+          highKnees = highKnee.steps;
+          feedback =
+            highKnee.feedback === "raise"
+              ? "膝蓋抬到髖部高度"
+              : highKnee.feedback === "lower"
+                ? "放下抬起的膝蓋"
+                : "左右交替，做得很好";
+        } else {
+          cadence = seated.current[session.index].update(motion.signal, now);
+          feedback = cadence > 0 ? "持續交替踩踏" : "請交替抬腳踩踏";
+        }
+      }
+      analyses.current[session.index] = {
+        cadence,
+        highKnees,
+        feedback,
+        tracking: true,
+        quality: motion.quality,
+      };
     };
 
     const infer = async (now: number) => {
       if (disposed || stopped) return;
-      if (lastResultTime && now - lastResultTime > 1600) {
-        estimator.current.reset();
-        callbacks.current.onCadence(0);
-        report("positioning");
-      }
       const video = videoRef.current;
       if (
         video &&
-        pose &&
         video.readyState >= 2 &&
         video.currentTime !== lastVideoTime &&
-        now - lastInference >= 40
+        now - lastInference >= (playerCount === 2 ? 80 : 66)
       ) {
         lastVideoTime = video.currentTime;
         lastInference = now;
         try {
-          const operation = pose.send({ image: video });
-          pendingOperation = operation;
-          await operation;
-          if (pendingOperation === operation) pendingOperation = null;
-        } catch (error) {
-          if (!disposed) {
-            stopped = true;
-            setErrorMessage(cameraError(error));
-            report("error");
-            callbacks.current.onCadence(0);
-            stream?.getTracks().forEach((track) => track.stop());
-            closePose();
+          // Snapshot both halves before inference so both players use the same
+          // camera frame. Raw right -> mirrored left is always player 1.
+          if (playerCount === 2) {
+            for (const session of sessions) {
+              const sourceWidth = video.videoWidth * session.region.width;
+              const sourceHeight = video.videoHeight;
+              const ratio = Math.min(1, 480 / sourceWidth, 640 / sourceHeight);
+              const width = Math.max(1, Math.round(sourceWidth * ratio));
+              const height = Math.max(1, Math.round(sourceHeight * ratio));
+              if (
+                session.crop.width !== width ||
+                session.crop.height !== height
+              ) {
+                session.crop.width = width;
+                session.crop.height = height;
+              }
+              const context = session.crop.getContext("2d");
+              if (!context) throw new Error("Cannot create player camera crop");
+              context.drawImage(
+                video,
+                video.videoWidth * session.region.x,
+                0,
+                sourceWidth,
+                sourceHeight,
+                0,
+                0,
+                width,
+                height,
+              );
+              session.imageAspect = width / height;
+            }
+          } else sessions[0].imageAspect = video.videoWidth / video.videoHeight;
+          for (const session of sessions) {
+            if (disposed || stopped || !session.model) return;
+            const operation = session.model.send({
+              image: playerCount === 2 ? session.crop : video,
+            });
+            session.pending = operation;
+            await operation;
+            if (session.pending === operation) session.pending = null;
           }
+          if (!disposed && !stopped) {
+            draw();
+            publish(true);
+          }
+        } catch (error) {
+          fail(cameraError(error));
           return;
         }
       }
-      // Schedule only after send resolves: MediaPipe must not receive two
-      // simultaneous frames, including during slower initial WASM startup.
+      // Both graphs are strictly sequential; no graph receives concurrent sends.
       if (!disposed && !stopped) frame = requestAnimationFrame(infer);
     };
 
     const start = async () => {
       try {
-        if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia)
           throw new DOMException("Secure context is required", "SecurityError");
-        }
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "user",
-            width: { ideal: 960 },
+            width: { ideal: playerCount === 2 ? 1280 : 960 },
             height: { ideal: 720 },
           },
           audio: false,
         });
-        if (disposed) {
+        if (disposed || stopped) {
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
         stream.getVideoTracks().forEach((track) => {
-          track.onended = () => {
-            if (disposed) return;
-            stopped = true;
-            cancelAnimationFrame(frame);
-            setErrorMessage("攝影機已中斷連線，請檢查裝置後重新連線。");
-            report("error");
-            callbacks.current.onCadence(0);
-            estimator.current.reset();
-            closePose();
-          };
+          track.onended = () => fail("攝影機已中斷，請檢查裝置後重新連線。");
         });
         const video = videoRef.current;
-        if (!video) return;
+        if (!video) throw new Error("Camera preview is unavailable");
         video.srcObject = stream;
         await video.play();
         const Pose = await loadLocalPose();
-        if (disposed) return;
-        pose = new Pose({ locateFile: (file) => assetUrl(`pose/${file}`) });
-        pose.setOptions({
-          modelComplexity: 0,
-          smoothLandmarks: true,
-          enableSegmentation: false,
-          minDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-        });
-        pose.onResults(receiveResult);
-        const initialization = pose.initialize();
-        pendingOperation = initialization;
-        await initialization;
-        if (pendingOperation === initialization) pendingOperation = null;
-        if (disposed) return;
+        if (disposed || stopped) return;
+        for (const session of sessions) {
+          if (disposed || stopped) return;
+          const model = new Pose({
+            locateFile: (file) => assetUrl(`pose/${file}`),
+          });
+          session.model = model;
+          model.setOptions({
+            modelComplexity: 0,
+            smoothLandmarks: true,
+            enableSegmentation: false,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+          });
+          model.onResults((result) => receiveResult(session, result));
+          const initialization = model.initialize();
+          session.pending = initialization;
+          await initialization;
+          if (session.pending === initialization) session.pending = null;
+        }
+        if (disposed || stopped) return;
         report("positioning");
         frame = requestAnimationFrame(infer);
+        watchdog = window.setInterval(() => {
+          if (disposed || stopped) return;
+          const now = performance.now();
+          let changed = false;
+          for (const session of sessions) {
+            if (
+              session.lastResult &&
+              now - session.lastResult > 1600 &&
+              analyses.current[session.index].tracking
+            ) {
+              invalidate(session, "影像暫停，請檢查攝影機");
+              changed = true;
+            }
+          }
+          if (changed) {
+            draw();
+            publish(true);
+          }
+        }, 400);
       } catch (error) {
-        stream?.getTracks().forEach((track) => track.stop());
-        closePose();
-        if (!disposed) {
-          setErrorMessage(cameraError(error));
-          report("error");
-          callbacks.current.onCadence(0);
-        }
+        fail(cameraError(error));
       }
     };
     void start();
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);
-      stream?.getTracks().forEach((track) => track.stop());
-      closePose();
+      window.clearInterval(watchdog);
+      stream?.getTracks().forEach((track) => {
+        track.onended = null;
+        track.stop();
+      });
+      closeModels();
       const video = videoRef.current;
       if (video) video.srcObject = null;
-      estimator.current.reset();
+      for (const estimator of seated.current) estimator.reset();
+      for (const estimator of standing.current) estimator.suspend();
     };
-  }, [mode, retry]);
-
-  const label =
-    status === "demo"
-      ? "示範姿態"
-      : status === "tracking"
-        ? "姿態追蹤中"
-        : status === "loading"
-          ? "正在開啟攝影機…"
-          : status === "error"
-            ? "攝影機未連線"
-            : "請讓肩膀到雙腳入鏡";
+  }, [mode, playerCount, retry]);
 
   return (
     <div
       className={`pose-camera pose-camera--${mode}`}
+      data-player-count={playerCount}
+      data-exercise-mode={exerciseMode}
       style={{
         position: "relative",
         width: "100%",
         height: "100%",
-        minHeight: 260,
+        minHeight: 0,
         overflow: "hidden",
-        borderRadius: 16,
+        borderRadius: 12,
         background: "#26352d",
         color: "#eef2e5",
       }}
@@ -423,6 +598,7 @@ export default function PoseCamera({
             playsInline
             autoPlay
             className="pose-video"
+            aria-label="鏡像攝影機畫面"
             style={{
               position: "absolute",
               inset: 0,
@@ -435,6 +611,7 @@ export default function PoseCamera({
           <canvas
             ref={canvasRef}
             className="pose-overlay"
+            aria-label="即時人體關節標記"
             style={{
               position: "absolute",
               inset: 0,
@@ -446,103 +623,138 @@ export default function PoseCamera({
           />
         </>
       ) : (
-        <DemoPose running={running} cadence={demoCadence} />
+        <DemoPose
+          running={running}
+          cadences={[demoCadence, demoCadence2]}
+          playerCount={playerCount}
+          exerciseMode={exerciseMode}
+        />
       )}
       <div
         aria-hidden="true"
         style={{
           position: "absolute",
           inset: 0,
-          background:
-            "linear-gradient(180deg, rgba(16,28,21,.25), transparent 28%, transparent 65%, rgba(16,28,21,.6))",
           pointerEvents: "none",
+          background:
+            "linear-gradient(180deg,#12251e88,transparent 27%,transparent 62%,#12251ed9)",
         }}
       />
+      {playerCount === 2 && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: 29,
+            bottom: 38,
+            borderLeft: "1px dashed #dce9cd66",
+          }}
+        />
+      )}
       <div
         className="pose-topline"
         style={{
           position: "absolute",
-          top: 16,
-          left: 17,
-          right: 17,
+          top: 8,
+          left: 8,
+          right: 8,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 8,
-          fontSize: 11,
-          letterSpacing: ".07em",
+          gap: 4,
+          fontSize: 9,
         }}
       >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
           <span
             style={{
-              width: 6,
-              height: 6,
+              width: 5,
+              height: 5,
               borderRadius: "50%",
-              background: status === "error" ? "#e8a78f" : "#c7eb8d",
-              boxShadow: "0 0 10px #c7eb8d66",
+              background: status === "error" ? "#e8a78f" : COLORS[0],
             }}
           />
-          {mode === "demo" ? "動作分析預覽" : "AI 即時動作分析"}
+          {mode === "demo"
+            ? "示範動畫・非即時影像"
+            : `${playerCount === 2 ? "雙人 " : ""}AI 動作分析`}
         </span>
-        <span
-          style={{ color: "#d5dfcf", fontFamily: "monospace", fontSize: 10 }}
-        >
-          POSE TRACKING
+        <span style={{ fontSize: 8, color: "#c4d7ba" }}>
+          {exerciseMode === "standing" ? "站姿抬膝" : "坐姿踩踏"}
         </span>
       </div>
       <div
-        aria-hidden="true"
+        className="pose-player-labels"
         style={{
           position: "absolute",
-          inset: "53px 24px 48px",
+          top: 27,
+          left: 8,
+          right: 8,
+          display: "flex",
+          gap: 8,
           pointerEvents: "none",
         }}
       >
-        {(["topLeft", "topRight", "bottomLeft", "bottomRight"] as const).map(
-          (corner) => (
-            <span
-              key={corner}
-              style={{
-                position: "absolute",
-                width: 15,
-                height: 15,
-                borderColor: "#c8e69a88",
-                borderStyle: "solid",
-                borderWidth: `${corner.startsWith("top") ? 2 : 0}px ${corner.endsWith("Right") ? 2 : 0}px ${corner.startsWith("bottom") ? 2 : 0}px ${corner.endsWith("Left") ? 2 : 0}px`,
-                ...(corner.startsWith("top") ? { top: 0 } : { bottom: 0 }),
-                ...(corner.endsWith("Left") ? { left: 0 } : { right: 0 }),
-              }}
-            />
-          ),
-        )}
+        {Array.from({ length: playerCount }, (_, index) => (
+          <span
+            key={index}
+            data-player-zone={index + 1}
+            style={{
+              flex: 1,
+              color: COLORS[index],
+              fontSize: 9,
+              textAlign: "left",
+              textShadow: "0 1px 4px #000",
+            }}
+          >
+            ● 玩家 {index + 1}
+            {mode === "camera" && players[index].tracking
+              ? ` · ${players[index].quality}%`
+              : ""}
+          </span>
+        ))}
       </div>
+      {status === "loading" && mode === "camera" && (
+        <div
+          role="status"
+          style={{
+            position: "absolute",
+            inset: "42% 8px auto",
+            textAlign: "center",
+            fontSize: 10,
+            textShadow: "0 1px 8px #000",
+          }}
+        >
+          正在載入{playerCount === 2 ? "雙人" : "本機"}辨識模型…
+        </div>
+      )}
       {status === "error" && mode === "camera" && (
         <div
           role="alert"
           className="pose-error"
           style={{
             position: "absolute",
-            inset: "65px 26px 57px",
+            inset: "29px 7px 28px",
             display: "flex",
             flexDirection: "column",
             justifyContent: "center",
             alignItems: "center",
             textAlign: "center",
-            gap: 14,
-            padding: 12,
-            background: "#24362df0",
-            borderRadius: 12,
+            gap: 7,
+            padding: 7,
+            background: "#24362df5",
+            borderRadius: 8,
           }}
         >
-          <span style={{ fontSize: 13, lineHeight: 1.8 }}>{errorMessage}</span>
+          <span style={{ fontSize: 10, lineHeight: 1.6 }}>{errorMessage}</span>
           <button
             type="button"
             onClick={() => setRetry((value) => value + 1)}
             style={{
               border: "1px solid #91a878",
-              borderRadius: 8,
-              padding: "8px 18px",
+              borderRadius: 6,
+              padding: "4px 10px",
+              fontSize: 10,
               color: "#e8f0dc",
               background: "#3f5540",
               cursor: "pointer",
@@ -552,183 +764,223 @@ export default function PoseCamera({
           </button>
         </div>
       )}
-      {status === "loading" && mode === "camera" && (
-        <div
-          role="status"
-          style={{
-            position: "absolute",
-            inset: "43% 20px auto",
-            textAlign: "center",
-            fontSize: 13,
-            textShadow: "0 1px 8px #000",
-          }}
-        >
-          正在載入本機辨識模型…
-        </div>
-      )}
       <div
         className="pose-footer"
         style={{
           position: "absolute",
-          bottom: 15,
-          left: 17,
-          right: 17,
+          bottom: 6,
+          left: 7,
+          right: 7,
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 8,
+          gap: 5,
         }}
       >
-        <span
-          style={{
-            padding: "6px 9px",
-            borderRadius: 6,
-            color: "#e0ebd5",
-            background: "#15271e99",
-            border: "1px solid #b7d29a22",
-            fontSize: 10,
-          }}
-        >
-          {label}
-          {mode === "demo" ? "・非即時影像" : ""}
-        </span>
-        <span
-          style={{ fontSize: 10, color: "#c8d8bc", letterSpacing: ".04em" }}
-        >
-          {mode === "demo"
-            ? "12 關節標記"
-            : status === "tracking"
-              ? `辨識品質 ${quality}%`
-              : "肩・髖・膝・踝"}
-        </span>
+        {Array.from({ length: playerCount }, (_, index) => (
+          <div
+            key={index}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              padding: "4px 5px",
+              borderRadius: 5,
+              background: "#14291ec4",
+              border: `1px solid ${COLORS[index]}30`,
+            }}
+          >
+            <span
+              data-player-status={index + 1}
+              data-tracking={players[index].tracking ? "true" : "false"}
+              data-cadence={players[index].cadence.toFixed(2)}
+              data-high-knees={players[index].highKnees}
+              style={{
+                display: "block",
+                color: COLORS[index],
+                fontSize: 9,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {mode === "demo"
+                ? `玩家${index + 1}示範`
+                : `玩家${index + 1}${players[index].tracking ? "已辨識" : "待入鏡"}`}
+            </span>
+            <span
+              title={players[index].feedback}
+              style={{
+                display: "block",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                color: "#dae6d1",
+                fontSize: 8,
+                marginTop: 2,
+              }}
+            >
+              {mode === "demo" ? "非即時影像" : players[index].feedback}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-function DemoPose({ running, cadence }: { running: boolean; cadence: number }) {
+function DemoPose({
+  running,
+  cadences,
+  playerCount,
+  exerciseMode,
+}: {
+  running: boolean;
+  cadences: [number, number];
+  playerCount: 1 | 2;
+  exerciseMode: ExerciseMode;
+}) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const state = useRef({ running, cadence });
-  state.current = { running, cadence };
+  const state = useRef({ running, cadences, playerCount, exerciseMode });
+  state.current = { running, cadences, playerCount, exerciseMode };
   useEffect(() => {
     let frame = 0;
     let previous = 0;
-    let phase = 0.7;
+    const phases = [0.7, 2.3];
     const render = (now: number) => {
       const element = canvas.current;
-      const context = element?.getContext("2d");
-      if (!element || !context) return;
+      const ctx = element?.getContext("2d");
+      if (!element || !ctx) return;
       const dt = previous ? Math.min((now - previous) / 1000, 0.1) : 0;
       previous = now;
-      if (state.current.running)
-        phase += ((dt * state.current.cadence) / 60) * Math.PI * 2;
       const w = 480,
         h = 360;
-      context.clearRect(0, 0, w, h);
-      context.strokeStyle = "#c4db9b0b";
-      context.lineWidth = 1;
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = "#c4db9b0e";
+      ctx.lineWidth = 1;
       for (let x = 0; x < w; x += 30) {
-        context.beginPath();
-        context.moveTo(x, 0);
-        context.lineTo(x, h);
-        context.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
       }
       for (let y = 0; y < h; y += 30) {
-        context.beginPath();
-        context.moveTo(0, y);
-        context.lineTo(w, y);
-        context.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
       }
-      const glow = context.createRadialGradient(w / 2, 180, 4, w / 2, 180, 160);
-      glow.addColorStop(0, "#a7c76f12");
-      glow.addColorStop(1, "#a7c76f00");
-      context.fillStyle = glow;
-      context.fillRect(0, 0, w, h);
-      // A seated, front-facing pose. Opposite leg phases show a full pedal cycle.
-      const liftLeft = Math.sin(phase),
-        liftRight = -liftLeft;
-      const points: Array<[number, number]> = [
-        [218, 116],
-        [262, 116],
-        [223, 192],
-        [257, 192],
-        [199, 230 - liftLeft * 24],
-        [281, 230 - liftRight * 24],
-        [218 + Math.cos(phase) * 12, 286 - liftLeft * 19],
-        [262 - Math.cos(phase) * 12, 286 - liftRight * 19],
-        [200, 280 - liftLeft * 19],
-        [280, 280 - liftRight * 19],
-        [193, 166],
-        [287, 166],
-      ];
-      context.strokeStyle = "#bfd09d26";
-      context.lineWidth = 5;
-      context.lineCap = "round";
-      context.beginPath();
-      context.moveTo(191, 191);
-      context.lineTo(191, 227);
-      context.lineTo(285, 227);
-      context.lineTo(285, 298);
-      context.moveTo(198, 227);
-      context.lineTo(198, 298);
-      context.stroke();
-      context.fillStyle = "#c3d9a508";
-      context.beginPath();
-      context.moveTo(...points[0]);
-      context.lineTo(...points[1]);
-      context.lineTo(...points[3]);
-      context.lineTo(...points[2]);
-      context.closePath();
-      context.fill();
-      context.strokeStyle = "#c4d1b15e";
-      context.lineWidth = 2;
-      context.beginPath();
-      context.ellipse(240, 85, 18, 22, 0, 0, Math.PI * 2);
-      context.stroke();
-      context.beginPath();
-      context.moveTo(240, 108);
-      context.lineTo(240, 116);
-      context.stroke();
-      const links = [
-        [0, 1],
-        [0, 2],
-        [1, 3],
-        [2, 3],
-        [2, 4],
-        [3, 5],
-        [4, 6],
-        [5, 7],
-        [6, 8],
-        [7, 9],
-        [0, 10],
-        [1, 11],
-        [10, 2],
-        [11, 3],
-      ];
-      for (const [a, b] of links) {
-        context.strokeStyle = a % 2 === 0 ? "#cce696" : "#91cfbf";
-        context.shadowColor = context.strokeStyle;
-        context.shadowBlur = 7;
-        context.lineWidth = 3;
-        context.beginPath();
-        context.moveTo(...points[a]);
-        context.lineTo(...points[b]);
-        context.stroke();
+      for (let index = 0; index < state.current.playerCount; index++) {
+        if (state.current.running)
+          phases[index] +=
+            ((dt * state.current.cadences[index]) / 60) * Math.PI * 2;
+        const phase = phases[index];
+        const standingPose = state.current.exerciseMode === "standing";
+        const centerX =
+          state.current.playerCount === 2 ? 120 + index * 240 : 240;
+        const horizontalScale = state.current.playerCount === 2 ? 0.85 : 1;
+        ctx.save();
+        ctx.translate(centerX, 0);
+        ctx.scale(horizontalScale, 1);
+        const liftLeft = standingPose
+          ? Math.max(0, Math.sin(phase))
+          : Math.sin(phase);
+        const liftRight = standingPose
+          ? Math.max(0, -Math.sin(phase))
+          : -Math.sin(phase);
+        const hipY = standingPose ? 190 : 192;
+        const points: Array<[number, number]> = [
+          [-22, 113],
+          [22, 113],
+          [-17, hipY],
+          [17, hipY],
+          [-37, standingPose ? 253 - liftLeft * 78 : 230 - liftLeft * 24],
+          [37, standingPose ? 253 - liftRight * 78 : 230 - liftRight * 24],
+          [
+            -22 + (standingPose ? 0 : Math.cos(phase) * 12),
+            standingPose ? 314 - liftLeft * 82 : 286 - liftLeft * 19,
+          ],
+          [
+            22 - (standingPose ? 0 : Math.cos(phase) * 12),
+            standingPose ? 314 - liftRight * 82 : 286 - liftRight * 19,
+          ],
+          [-40, standingPose ? 314 - liftLeft * 82 : 280 - liftLeft * 19],
+          [40, standingPose ? 314 - liftRight * 82 : 280 - liftRight * 19],
+          [-47, 165],
+          [47, 165],
+        ];
+        if (!standingPose) {
+          ctx.strokeStyle = "#bfd09d30";
+          ctx.lineWidth = 5;
+          ctx.lineCap = "round";
+          ctx.beginPath();
+          ctx.moveTo(-49, 191);
+          ctx.lineTo(-49, 227);
+          ctx.lineTo(45, 227);
+          ctx.lineTo(45, 301);
+          ctx.moveTo(-42, 227);
+          ctx.lineTo(-42, 301);
+          ctx.stroke();
+        } else {
+          ctx.strokeStyle = `${COLORS[index]}55`;
+          ctx.lineWidth = 1;
+          ctx.setLineDash([5, 5]);
+          ctx.beginPath();
+          ctx.moveTo(-75, hipY);
+          ctx.lineTo(75, hipY);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        ctx.fillStyle = `${COLORS[index]}09`;
+        ctx.beginPath();
+        ctx.moveTo(...points[0]);
+        ctx.lineTo(...points[1]);
+        ctx.lineTo(...points[3]);
+        ctx.lineTo(...points[2]);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = `${COLORS[index]}77`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(0, 82, 18, 22, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, 104);
+        ctx.lineTo(0, 113);
+        ctx.stroke();
+        const links = [
+          [0, 1],
+          [0, 2],
+          [1, 3],
+          [2, 3],
+          [2, 4],
+          [3, 5],
+          [4, 6],
+          [5, 7],
+          [6, 8],
+          [7, 9],
+          [0, 10],
+          [1, 11],
+          [10, 2],
+          [11, 3],
+        ];
+        ctx.strokeStyle = COLORS[index];
+        ctx.shadowColor = COLORS[index];
+        ctx.shadowBlur = 6;
+        ctx.lineWidth = 3;
+        for (const [a, b] of links) {
+          ctx.beginPath();
+          ctx.moveTo(...points[a]);
+          ctx.lineTo(...points[b]);
+          ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+        for (const [x, y] of points) {
+          ctx.beginPath();
+          ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+          ctx.fillStyle = COLORS[index];
+          ctx.fill();
+          ctx.strokeStyle = "#26382c";
+          ctx.lineWidth = 1.3;
+          ctx.stroke();
+        }
+        ctx.restore();
       }
-      context.shadowBlur = 0;
-      points.forEach(([x, y], index) => {
-        context.beginPath();
-        context.arc(x, y, 4.5, 0, Math.PI * 2);
-        context.fillStyle = index % 2 === 0 ? "#ddf3ae" : "#b5e8dc";
-        context.fill();
-        context.strokeStyle = "#26382c";
-        context.lineWidth = 1.6;
-        context.stroke();
-      });
-      context.fillStyle = "#d0ddb768";
-      context.font = "9px monospace";
-      context.fillText("L", 174, 215);
-      context.fillText("R", 301, 215);
       frame = requestAnimationFrame(render);
     };
     frame = requestAnimationFrame(render);
@@ -739,7 +991,7 @@ function DemoPose({ running, cadence }: { running: boolean; cadence: number }) {
       ref={canvas}
       width={480}
       height={360}
-      aria-label="示範坐姿空中踩踏的關節辨識動畫，非即時攝影機影像"
+      aria-label={`示範${playerCount === 2 ? "雙人" : "單人"}${exerciseMode === "standing" ? "站姿高抬膝" : "坐姿空中踩踏"}關節動畫，非即時攝影機影像`}
       style={{
         position: "absolute",
         inset: 0,

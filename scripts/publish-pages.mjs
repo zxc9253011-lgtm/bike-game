@@ -92,16 +92,16 @@ try {
     "main",
     sourceFiles,
     root,
-    "Add Forest Pedal browser game and GitHub Pages publishing",
+    "Add two-player races, high knees and fullscreen pose preview",
   );
   await publish(
     "gh-pages",
     await filesUnder(join(root, "dist-pages")),
     join(root, "dist-pages"),
-    "Publish Forest Pedal static website",
+    "Publish two-player races and exercise modes",
   );
   console.log(
-    `Website files uploaded. GitHub Pages publishing must be enabled for gh-pages / (root).\nExpected website: ${website}`,
+    `Website files uploaded. GitHub Pages deploys the gh-pages branch automatically.\nWebsite: ${website}`,
   );
   console.log(
     "The active working branch and application files were preserved.",

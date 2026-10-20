@@ -1,0 +1,726 @@
+.main-column > .game-setup {
+  margin-bottom: 16px;
+}
+.ride-card {
+  height: 530px;
+}
+.ride-card.is-duel {
+  height: 570px;
+}
+.scene-fullscreen-setup {
+  display: none;
+}
+.scene-camera {
+  position: absolute;
+  top: 76px;
+  right: 18px;
+  width: 236px;
+  overflow: hidden;
+  border: 1px solid #ffffffa6;
+  border-radius: 13px;
+  background: #f9fbf2ed;
+  box-shadow: 0 5px 25px #243e2726;
+  backdrop-filter: blur(14px);
+  z-index: 5;
+}
+.scene-camera-heading {
+  height: 35px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: #496343;
+}
+.scene-camera-heading > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.scene-camera-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.scene-camera-heading button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  min-height: 26px;
+  border-radius: 6px;
+  padding: 3px;
+  background: #e5ecda;
+  color: #6b805b;
+  font-size: 9px;
+}
+.scene-camera-heading .camera-source-button {
+  padding: 4px 7px;
+}
+.camera-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #a5ad94;
+}
+.camera-status-dot.detected {
+  background: #6b9d4f;
+  box-shadow: 0 0 0 3px #89b16a20;
+}
+.scene-camera .camera-viewport {
+  height: 170px;
+  margin: 0 5px;
+  border-radius: 8px;
+}
+.scene-camera .camera-viewport .pose-camera {
+  height: 100% !important;
+  min-height: 0 !important;
+  border-radius: 8px !important;
+}
+.scene-camera .pose-topline {
+  font-size: 8px !important;
+  top: 9px !important;
+  left: 9px !important;
+  right: 9px !important;
+}
+.scene-camera .pose-topline > span:last-child {
+  display: none !important;
+}
+.scene-camera-summary {
+  font-size: 9px;
+  line-height: 1.65;
+  color: #708063;
+  padding: 7px 9px;
+  background: #f4f7ec;
+}
+.scene-camera.is-collapsed .camera-viewport {
+  height: 0 !important;
+  visibility: hidden;
+}
+.scene-camera.is-collapsed .scene-camera-summary {
+  display: none;
+}
+.scene-camera .camera-viewport .pose-error {
+  inset: 27px 8px 30px !important;
+  gap: 6px !important;
+  padding: 5px !important;
+}
+.scene-camera .camera-viewport .pose-error > span {
+  font-size: 10px !important;
+  line-height: 1.6 !important;
+}
+.scene-camera .camera-viewport .pose-error button {
+  font-size: 9px;
+  padding: 5px 10px !important;
+}
+.is-duel .scene-status {
+  top: 111px;
+  max-width: calc(100% - 292px);
+  flex-wrap: wrap;
+}
+.race-hud {
+  top: 151px;
+  left: 24px;
+  width: calc(100% - 302px);
+  max-width: 500px;
+}
+.race-player-metrics {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.race-player-distance {
+  white-space: nowrap;
+}
+.race-positioning-note {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 36px);
+  padding: 9px 15px;
+  border-radius: 9px;
+  background: #fff9e5ed;
+  color: #806e42;
+  font-size: 11px;
+  text-align: center;
+}
+.race-result-inline {
+  bottom: 91px;
+}
+.tracking-summary-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 13px 10px;
+  border: 1px solid #e8eddf;
+  border-radius: 10px;
+  background: #f6f8ef;
+}
+.tracking-summary-icon {
+  display: flex;
+  color: #8da474;
+  padding-top: 2px;
+}
+.tracking-summary-card strong {
+  font-size: 11px;
+  font-weight: 600;
+  color: #58714a;
+}
+.tracking-summary-card p {
+  font-size: 10px;
+  line-height: 1.8;
+  color: #94a087;
+  margin: 5px 0 0;
+}
+.player-tracking-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.player-tracking-list > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #98a38d;
+}
+.player-tracking-list > div > span:first-child {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.player-tracking-list .tracked {
+  background: #77a45c;
+}
+.player-tracking-list .not-tracked {
+  background: #c2af7f;
+}
+.player-tracking-list strong {
+  color: #6d805c;
+  font-size: 10px;
+  margin-right: auto;
+  font-weight: 500;
+}
+.second-player-pace {
+  border-top: 1px solid #e5ebde;
+  padding-top: 13px;
+  margin-top: 15px;
+}
+.second-player-pace > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+.second-player-pace > div > span {
+  font-size: 10px;
+  color: #8295a6;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.second-player-pace i {
+  width: 7px;
+  height: 7px;
+  background: #5d94b6;
+  border-radius: 50%;
+}
+.second-player-pace strong {
+  color: #507f9e;
+  font:
+    22px Arial,
+    sans-serif;
+}
+.second-player-pace small {
+  color: #8aa1af;
+  font:
+    9px Arial,
+    sans-serif;
+  margin-left: 5px;
+}
+.second-player-pace > div:nth-child(2) strong {
+  font-size: 15px;
+}
+.second-player-pace p {
+  font-size: 10px;
+  color: #8599a6;
+  line-height: 1.8;
+  margin: 5px 0 0;
+}
+.high-knee-feedback {
+  margin: 11px 0 0;
+  padding: 8px;
+  border-radius: 7px;
+  background: #eff4e5;
+  font-size: 10px;
+  line-height: 1.75;
+  color: #7a9061;
+}
+.player-two-demo {
+  margin-top: 16px;
+  padding-top: 13px;
+  border-top: 1px solid #e8eee0;
+}
+.player-two-demo > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.player-two-demo > div > span {
+  color: #7599af;
+  font:
+    12px Arial,
+    sans-serif;
+}
+.player-two-demo input {
+  accent-color: #729db7;
+}
+.record-row > div:last-child {
+  max-width: 54%;
+}
+.record-row > div:last-child > strong {
+  font-size: 11px;
+}
+.mode-tabs button:disabled {
+  opacity: 0.5;
+}
+.ride-card .modal-backdrop {
+  z-index: 30;
+}
+.ride-card:fullscreen,
+.ride-card.expanded-view {
+  height: 100vh;
+  height: 100dvh;
+  width: 100vw;
+  border-radius: 0;
+}
+.ride-card.expanded-view {
+  position: fixed;
+  inset: 0;
+  z-index: 18;
+}
+.ride-card:fullscreen .scene-camera,
+.ride-card.expanded-view .scene-camera {
+  top: 87px;
+  right: 26px;
+  width: 320px;
+}
+.ride-card:fullscreen .scene-camera-heading,
+.ride-card.expanded-view .scene-camera-heading {
+  height: 42px;
+  padding: 0 13px;
+}
+.ride-card:fullscreen .scene-camera-heading > span,
+.ride-card.expanded-view .scene-camera-heading > span {
+  font-size: 14px;
+}
+.ride-card:fullscreen .scene-camera-summary,
+.ride-card.expanded-view .scene-camera-summary {
+  font-size: 12px;
+  padding: 9px 12px;
+}
+.ride-card:fullscreen .scene-camera .camera-viewport,
+.ride-card.expanded-view .scene-camera .camera-viewport {
+  height: 235px;
+}
+.ride-card:fullscreen .scene-fullscreen-setup,
+.ride-card.expanded-view .scene-fullscreen-setup {
+  display: block;
+  position: absolute;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(490px, calc(100% - 620px));
+  z-index: 5;
+}
+.ride-card:fullscreen .game-setup-compact,
+.ride-card.expanded-view .game-setup-compact {
+  padding: 9px 12px;
+  gap: 7px;
+}
+.ride-card:fullscreen .game-setup-compact-field,
+.ride-card.expanded-view .game-setup-compact-field {
+  flex-basis: 100px;
+}
+.ride-card:fullscreen .game-setup-compact-hint,
+.ride-card.expanded-view .game-setup-compact-hint {
+  display: none;
+}
+.ride-card:fullscreen .race-hud,
+.ride-card.expanded-view .race-hud {
+  top: 170px;
+  left: 28px;
+  width: min(500px, calc(100% - 400px));
+}
+.ride-card:fullscreen .scene-bottom,
+.ride-card.expanded-view .scene-bottom {
+  bottom: 32px;
+  left: 32px;
+  right: 32px;
+}
+.ride-card:fullscreen .start-button,
+.ride-card.expanded-view .start-button {
+  height: 56px;
+  font-size: 17px;
+}
+.ride-card:fullscreen .scene-camera.is-collapsed .camera-viewport,
+.ride-card.expanded-view .scene-camera.is-collapsed .camera-viewport {
+  height: 0 !important;
+}
+.ride-card:fullscreen .camera-viewport .pose-error,
+.ride-card.expanded-view .camera-viewport .pose-error {
+  inset: 43px 12px !important;
+}
+.ride-card:fullscreen .camera-viewport .pose-error > span,
+.ride-card.expanded-view .camera-viewport .pose-error > span {
+  font-size: 13px !important;
+}
+@media (max-width: 1100px) {
+  .game-setup:not(.game-setup-compact) {
+    flex-wrap: wrap;
+    gap: 13px;
+  }
+  .game-setup:not(.game-setup-compact) .game-setup-field {
+    flex-basis: calc(50% - 8px);
+  }
+  .game-setup:not(.game-setup-compact) .game-distance-field {
+    flex-basis: 100%;
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    align-items: center;
+  }
+  .game-distance-field > .game-setup-hint {
+    grid-column: 2;
+  }
+  .scene-camera {
+    width: 206px;
+    right: 15px;
+  }
+  .scene-camera .camera-viewport {
+    height: 156px;
+  }
+  .race-hud {
+    width: calc(100% - 257px);
+    left: 18px;
+  }
+  .is-duel .scene-status {
+    max-width: calc(100% - 250px);
+  }
+  .race-player-metrics {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .race-hud .race-player-distance {
+    justify-content: flex-start;
+  }
+}
+@media (max-width: 760px) {
+  .ride-card {
+    height: 495px;
+  }
+  .ride-card.is-duel {
+    height: 565px;
+  }
+  .scene-camera {
+    top: 72px;
+    right: 12px;
+    width: 168px;
+  }
+  .scene-camera .camera-viewport {
+    height: 138px;
+  }
+  .scene-camera-heading {
+    padding: 0 7px;
+    height: 31px;
+  }
+  .scene-camera-heading > span {
+    font-size: 9px;
+    gap: 4px;
+  }
+  .scene-camera-heading > span > svg {
+    width: 12px;
+  }
+  .scene-camera-summary {
+    font-size: 8px;
+    padding: 5px 7px;
+  }
+  .scene-camera .camera-source-button {
+    font-size: 8px;
+    padding: 3px 5px;
+  }
+  .scene-location h2 {
+    font-size: 24px;
+  }
+  .scene-kicker {
+    font-size: 8px;
+  }
+  .scene-status {
+    top: 142px;
+    max-width: calc(100% - 202px);
+    flex-wrap: wrap;
+    font-size: 8px;
+    line-height: 1.5;
+  }
+  .is-duel .scene-status {
+    display: none;
+  }
+  .race-hud {
+    top: 141px;
+    left: 14px;
+    width: calc(100% - 210px);
+    max-width: none;
+  }
+  .race-hud-heading {
+    font-size: 9px;
+  }
+  .race-player-card {
+    padding: 8px 10px;
+  }
+  .race-player-heading {
+    margin-bottom: 4px;
+  }
+  .race-player-metrics {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 5px;
+  }
+  .race-player-speed strong {
+    font-size: 22px;
+  }
+  .race-player-distance strong {
+    font-size: 11px;
+  }
+  .race-player-distance > span {
+    font-size: 7px;
+  }
+  .race-progress-track {
+    margin-top: 7px;
+  }
+  .race-positioning-note {
+    bottom: 78px;
+    font-size: 9px;
+    padding: 7px 10px;
+  }
+  .ride-card:fullscreen .scene-fullscreen-setup,
+  .ride-card.expanded-view .scene-fullscreen-setup {
+    top: auto;
+    bottom: 92px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    transform: none;
+  }
+  .ride-card:fullscreen .scene-camera,
+  .ride-card.expanded-view .scene-camera {
+    width: 200px;
+    right: 14px;
+    top: 70px;
+  }
+  .ride-card:fullscreen .scene-camera .camera-viewport,
+  .ride-card.expanded-view .scene-camera .camera-viewport {
+    height: 165px;
+  }
+  .ride-card:fullscreen .scene-camera-heading > span,
+  .ride-card.expanded-view .scene-camera-heading > span {
+    font-size: 11px;
+  }
+  .ride-card:fullscreen .scene-camera-summary,
+  .ride-card.expanded-view .scene-camera-summary {
+    font-size: 10px;
+  }
+  .ride-card:fullscreen .race-hud,
+  .ride-card.expanded-view .race-hud {
+    top: 340px;
+    width: calc(100% - 32px);
+    left: 16px;
+  }
+  .ride-card:fullscreen .scene-bottom,
+  .ride-card.expanded-view .scene-bottom {
+    left: 18px;
+    right: 18px;
+    bottom: 22px;
+    gap: 12px;
+  }
+  .ride-card:fullscreen .start-button,
+  .ride-card.expanded-view .start-button {
+    font-size: 13px;
+    padding: 0 17px;
+    height: 46px;
+  }
+  .ride-card:fullscreen .end-ride,
+  .ride-card.expanded-view .end-ride {
+    bottom: 56px;
+  }
+  .ride-card .race-result-inline {
+    bottom: 89px;
+  }
+}
+@media (max-width: 450px) {
+  .game-setup {
+    padding: 14px;
+  }
+  .game-setup-hint {
+    font-size: 9px;
+  }
+  .game-segmented button {
+    font-size: 11px;
+    gap: 5px;
+  }
+  .scene-camera {
+    width: 147px;
+  }
+  .scene-camera .camera-viewport {
+    height: 130px;
+  }
+  .scene-camera-summary {
+    font-size: 7px;
+  }
+  .scene-status {
+    max-width: calc(100% - 178px);
+  }
+  .race-hud {
+    top: 125px;
+    left: 13px;
+    width: calc(100% - 183px);
+  }
+  .race-player-grid {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+  .race-player-card {
+    padding: 6px 8px;
+  }
+  .race-player-heading {
+    min-height: 16px;
+    margin-bottom: 0;
+  }
+  .race-player-name {
+    font-size: 10px;
+  }
+  .race-player-speed strong {
+    font-size: 19px;
+  }
+  .race-player-metrics {
+    flex-direction: row;
+    gap: 4px;
+  }
+  .race-hud-heading {
+    font-size: 8px;
+    gap: 5px;
+    margin-bottom: 5px;
+  }
+  .race-player-distance {
+    font-size: 8px;
+  }
+  .race-player-distance strong {
+    font-size: 10px;
+  }
+  .ride-card:fullscreen .race-player-grid,
+  .ride-card.expanded-view .race-player-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ride-card:fullscreen .race-player-card,
+  .ride-card.expanded-view .race-player-card {
+    padding: 10px;
+  }
+  .race-progress-track {
+    margin-top: 7px;
+  }
+  .scene-camera .pose-footer {
+    left: 6px !important;
+    right: 6px !important;
+    bottom: 7px !important;
+  }
+  .scene-camera .pose-footer > span {
+    font-size: 7px !important;
+  }
+  .scene-camera .camera-viewport .pose-error {
+    inset: 22px 3px 24px !important;
+  }
+  .scene-camera .camera-viewport .pose-error > span {
+    font-size: 8px !important;
+  }
+  .scene-camera .camera-viewport .pose-error button {
+    font-size: 8px;
+    padding: 4px 7px !important;
+  }
+}
+@media (max-height: 550px) and (min-width: 600px) {
+  .ride-card:fullscreen .scene-camera,
+  .ride-card.expanded-view .scene-camera {
+    width: 205px;
+    top: 62px;
+    right: 12px;
+  }
+  .ride-card:fullscreen .scene-camera .camera-viewport,
+  .ride-card.expanded-view .scene-camera .camera-viewport {
+    height: 126px;
+  }
+  .ride-card:fullscreen .scene-camera-heading,
+  .ride-card.expanded-view .scene-camera-heading {
+    height: 30px;
+  }
+  .ride-card:fullscreen .scene-camera-heading > span,
+  .ride-card.expanded-view .scene-camera-heading > span {
+    font-size: 10px;
+  }
+  .ride-card:fullscreen .scene-camera-summary,
+  .ride-card.expanded-view .scene-camera-summary {
+    font-size: 8px;
+  }
+  .ride-card:fullscreen .scene-fullscreen-setup,
+  .ride-card.expanded-view .scene-fullscreen-setup {
+    top: 10px;
+    width: calc(100% - 520px);
+    min-width: 270px;
+  }
+  .ride-card:fullscreen .race-hud,
+  .ride-card.expanded-view .race-hud {
+    top: 120px;
+    width: min(360px, calc(100% - 270px));
+  }
+  .ride-card:fullscreen .scene-bottom,
+  .ride-card.expanded-view .scene-bottom {
+    bottom: 16px;
+  }
+}
+@media (max-height: 550px) and (min-width: 600px) {
+  .ride-card:fullscreen .scene-kicker,
+  .ride-card.expanded-view .scene-kicker {
+    display: none;
+  }
+  .ride-card:fullscreen .scene-location h2,
+  .ride-card.expanded-view .scene-location h2 {
+    font-size: 21px;
+    margin-top: 0;
+    margin-bottom: 7px;
+  }
+  .ride-card:fullscreen .scene-status,
+  .ride-card.expanded-view .scene-status {
+    display: none;
+  }
+  .ride-card:fullscreen .race-hud,
+  .ride-card.expanded-view .race-hud {
+    top: 85px;
+  }
+  .ride-card:fullscreen .race-player-card,
+  .ride-card.expanded-view .race-player-card {
+    padding: 7px 9px;
+  }
+  .ride-card:fullscreen .race-player-metrics,
+  .ride-card.expanded-view .race-player-metrics {
+    flex-direction: row;
+    align-items: baseline;
+  }
+  .ride-card:fullscreen .race-player-speed strong,
+  .ride-card.expanded-view .race-player-speed strong {
+    font-size: 22px;
+  }
+}

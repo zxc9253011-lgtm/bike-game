@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 type Route = "forest" | "coast" | "sunset";
-type Props = { speed: number; running: boolean; route: Route };
+type Props = {
+  speed: number;
+  running: boolean;
+  route: Route;
+  playerCount?: 1 | 2;
+  opponentSpeed?: number;
+  playerDistances?: [number, number];
+};
 type Vec = [number, number, number];
 
 const palettes = {
@@ -48,16 +55,39 @@ const palettes = {
 };
 
 /** A self-contained, procedural cycling world. Distances are in metres. */
-export default function RideScene({ speed, running, route }: Props) {
+export default function RideScene({
+  speed,
+  running,
+  route,
+  playerCount = 1,
+  opponentSpeed = 0,
+  playerDistances,
+}: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const motionRef = useRef({ speed, running });
+  const motionRef = useRef({
+    speed,
+    running,
+    playerCount,
+    opponentSpeed,
+    playerDistances,
+  });
   const routeRef = useRef(route);
   const changeRouteRef = useRef<((next: Route) => void) | null>(null);
+  const changePlayersRef = useRef<((count: 1 | 2) => void) | null>(null);
   const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
-    motionRef.current = { speed, running };
-  }, [speed, running]);
+    motionRef.current = {
+      speed,
+      running,
+      playerCount,
+      opponentSpeed,
+      playerDistances,
+    };
+  }, [speed, running, playerCount, opponentSpeed, playerDistances]);
+  useEffect(() => {
+    changePlayersRef.current?.(playerCount);
+  }, [playerCount]);
   useEffect(() => {
     routeRef.current = route;
     changeRouteRef.current?.(route);
@@ -632,170 +662,177 @@ export default function RideScene({ speed, running, route }: Props) {
       return { mesh, entries: batch.entries, kind: batch.kind };
     });
 
-    // A coherent bicycle, with the axle aligned across the rider's direction.
-    const cyclist = new THREE.Group();
-    cyclist.position.set(0, 0.04, 2.0);
-    scene.add(cyclist);
-    const tire = mat("#3f4a43");
-    const rim = mat("#c7cdbd", 0.5);
-    const metal = mat("#d5d6bd", 0.45);
-    const frameMat = mat("#3f7568", 0.5);
-    const dark = mat("#354b44");
-    const jersey = mat("#568e7b");
-    const jerseyLight = mat("#6ca18b");
-    const pants = mat("#3c5149");
-    const skin = mat("#dfb58f");
-    const helmetMat = mat("#f1e8cd");
-    const hairMat = mat("#d9d8cb");
-    const shoes = mat("#efdfbf");
-    const wheels: THREE.Group[] = [];
-    for (const z of [0.91, -1.03]) {
-      const wheel = new THREE.Group();
-      wheel.position.set(0, 0.58, z);
-      const rubber = new THREE.Mesh(
-        new THREE.TorusGeometry(0.52, 0.047, 8, 36),
-        tire,
-      );
-      rubber.rotation.y = Math.PI / 2;
-      rubber.castShadow = true;
-      wheel.add(rubber);
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(0.467, 0.014, 6, 36),
-        rim,
-      );
-      ring.rotation.y = Math.PI / 2;
-      wheel.add(ring);
-      tube(wheel, [-0.09, 0, 0], [0.09, 0, 0], 0.043, metal);
-      for (let j = 0; j < 12; j++) {
-        const a = (j * Math.PI) / 6;
-        tube(
-          wheel,
-          [0, 0, 0],
-          [0, Math.cos(a) * 0.46, Math.sin(a) * 0.46],
-          0.006,
+    // Each rider owns all animated objects and materials. Only immutable world
+    // geometry is shared, so one player's pedalling cannot move the other.
+    function createCyclist(player: 1 | 2) {
+      const cyclist = new THREE.Group();
+      cyclist.name = player === 1 ? "P1-GreenCyclist" : "P2-BlueCyclist";
+      cyclist.position.set(0, 0.04, 2.0);
+      scene.add(cyclist);
+      const tire = mat("#3f4a43");
+      const rim = mat("#c7cdbd", 0.5);
+      const metal = mat("#d5d6bd", 0.45);
+      const frameMat = mat(player === 1 ? "#3f7568" : "#426d9c", 0.5);
+      const dark = mat("#354b44");
+      const jersey = mat(player === 1 ? "#568e7b" : "#4a83c2");
+      const jerseyLight = mat(player === 1 ? "#6ca18b" : "#72a4db");
+      const pants = mat("#3c5149");
+      const skin = mat("#dfb58f");
+      const helmetMat = mat("#f1e8cd");
+      const hairMat = mat("#d9d8cb");
+      const shoes = mat("#efdfbf");
+      const wheels: THREE.Group[] = [];
+      for (const z of [0.91, -1.03]) {
+        const wheel = new THREE.Group();
+        wheel.position.set(0, 0.58, z);
+        const rubber = new THREE.Mesh(
+          new THREE.TorusGeometry(0.52, 0.047, 8, 36),
+          tire,
+        );
+        rubber.rotation.y = Math.PI / 2;
+        rubber.castShadow = true;
+        wheel.add(rubber);
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(0.467, 0.014, 6, 36),
           rim,
         );
+        ring.rotation.y = Math.PI / 2;
+        wheel.add(ring);
+        tube(wheel, [-0.09, 0, 0], [0.09, 0, 0], 0.043, metal);
+        for (let j = 0; j < 12; j++) {
+          const a = (j * Math.PI) / 6;
+          tube(
+            wheel,
+            [0, 0, 0],
+            [0, Math.cos(a) * 0.46, Math.sin(a) * 0.46],
+            0.006,
+            rim,
+          );
+        }
+        cyclist.add(wheel);
+        wheels.push(wheel);
       }
-      cyclist.add(wheel);
-      wheels.push(wheel);
-    }
-    const rear: Vec = [0, 0.58, 0.91],
-      bb: Vec = [0, 0.55, 0.04],
-      seat: Vec = [0, 1.34, 0.36];
-    const head: Vec = [0, 1.29, -0.81],
-      fork: Vec = [0, 0.58, -1.03];
-    [
-      [rear, bb],
-      [bb, seat],
-      [seat, rear],
-      [seat, head],
-      [head, bb],
-      [head, fork],
-    ].forEach(([a, b]) => tube(cyclist, a, b, 0.035, frameMat));
-    tube(cyclist, [0, 1.23, 0.39], [0, 1.48, 0.44], 0.027, metal);
-    ball(cyclist, [0, 1.48, 0.43], [0.22, 0.052, 0.18], dark);
-    tube(cyclist, [0, 1.29, -0.81], [0, 1.51, -0.83], 0.024, metal);
-    tube(cyclist, [-0.34, 1.52, -0.87], [0.34, 1.52, -0.87], 0.022, metal);
-    tube(cyclist, [-0.34, 1.52, -0.87], [-0.34, 1.5, -1.02], 0.034, dark);
-    tube(cyclist, [0.34, 1.52, -0.87], [0.34, 1.5, -1.02], 0.034, dark);
-    // Rear rack, small reflector and bottle are readable details at this scale.
-    tube(cyclist, [-0.15, 0.64, 0.92], [-0.15, 1.16, 0.8], 0.013, metal);
-    tube(cyclist, [0.15, 0.64, 0.92], [0.15, 1.16, 0.8], 0.013, metal);
-    tube(cyclist, [-0.15, 1.16, 0.5], [-0.15, 1.16, 1.2], 0.016, metal);
-    tube(cyclist, [0.15, 1.16, 0.5], [0.15, 1.16, 1.2], 0.016, metal);
-    tube(cyclist, [-0.15, 1.16, 1.2], [0.15, 1.16, 1.2], 0.016, metal);
-    ball(cyclist, [0, 1.15, 1.23], [0.07, 0.035, 0.02], mat("#c37658"));
-    tube(
-      cyclist,
-      [0.03, 0.74, -0.14],
-      [0.03, 0.98, -0.3],
-      0.065,
-      mat("#e4d6ac"),
-    );
+      const rear: Vec = [0, 0.58, 0.91],
+        bb: Vec = [0, 0.55, 0.04],
+        seat: Vec = [0, 1.34, 0.36];
+      const head: Vec = [0, 1.29, -0.81],
+        fork: Vec = [0, 0.58, -1.03];
+      [
+        [rear, bb],
+        [bb, seat],
+        [seat, rear],
+        [seat, head],
+        [head, bb],
+        [head, fork],
+      ].forEach(([a, b]) => tube(cyclist, a, b, 0.035, frameMat));
+      tube(cyclist, [0, 1.23, 0.39], [0, 1.48, 0.44], 0.027, metal);
+      ball(cyclist, [0, 1.48, 0.43], [0.22, 0.052, 0.18], dark);
+      tube(cyclist, [0, 1.29, -0.81], [0, 1.51, -0.83], 0.024, metal);
+      tube(cyclist, [-0.34, 1.52, -0.87], [0.34, 1.52, -0.87], 0.022, metal);
+      tube(cyclist, [-0.34, 1.52, -0.87], [-0.34, 1.5, -1.02], 0.034, dark);
+      tube(cyclist, [0.34, 1.52, -0.87], [0.34, 1.5, -1.02], 0.034, dark);
+      // Rear rack, small reflector and bottle are readable details at this scale.
+      tube(cyclist, [-0.15, 0.64, 0.92], [-0.15, 1.16, 0.8], 0.013, metal);
+      tube(cyclist, [0.15, 0.64, 0.92], [0.15, 1.16, 0.8], 0.013, metal);
+      tube(cyclist, [-0.15, 1.16, 0.5], [-0.15, 1.16, 1.2], 0.016, metal);
+      tube(cyclist, [0.15, 1.16, 0.5], [0.15, 1.16, 1.2], 0.016, metal);
+      tube(cyclist, [-0.15, 1.16, 1.2], [0.15, 1.16, 1.2], 0.016, metal);
+      ball(cyclist, [0, 1.15, 1.23], [0.07, 0.035, 0.02], mat("#c37658"));
+      tube(
+        cyclist,
+        [0.03, 0.74, -0.14],
+        [0.03, 0.98, -0.3],
+        0.065,
+        mat("#e4d6ac"),
+      );
 
-    const rider = new THREE.Group();
-    cyclist.add(rider);
-    ball(rider, [0, 1.64, 0.37], [0.27, 0.2, 0.19], pants);
-    const torso = ball(rider, [0, 1.99, 0.17], [0.31, 0.43, 0.22], jersey);
-    torso.rotation.x = -0.24;
-    ball(rider, [0, 2.18, 0.13], [0.32, 0.15, 0.22], jerseyLight);
-    // A reflective strip on the back adds a familiar cycling-shirt detail.
-    const backStripe = new THREE.Mesh(
-      new THREE.BoxGeometry(0.42, 0.045, 0.014),
-      helmetMat,
-    );
-    backStripe.position.set(0, 1.98, 0.392);
-    backStripe.rotation.x = -0.24;
-    rider.add(backStripe);
-    tube(rider, [0, 2.21, 0.04], [0, 2.37, -0.03], 0.09, skin);
-    const headGroup = new THREE.Group();
-    headGroup.position.set(0, 2.49, -0.065);
-    rider.add(headGroup);
-    ball(headGroup, [0, 0, 0], [0.205, 0.235, 0.19], skin);
-    ball(headGroup, [0, 0.035, 0.07], [0.211, 0.19, 0.17], hairMat);
-    ball(headGroup, [-0.205, -0.015, 0], [0.043, 0.07, 0.045], skin);
-    ball(headGroup, [0.205, -0.015, 0], [0.043, 0.07, 0.045], skin);
-    ball(headGroup, [0, -0.035, -0.18], [0.05, 0.06, 0.065], skin);
-    const helmet = new THREE.Mesh(
-      new THREE.SphereGeometry(
-        0.254,
-        18,
-        10,
-        0,
-        Math.PI * 2,
-        0,
-        Math.PI * 0.62,
-      ),
-      helmetMat,
-    );
-    helmet.position.y = 0.095;
-    helmet.scale.set(1, 0.8, 1.1);
-    helmet.castShadow = true;
-    headGroup.add(helmet);
-    for (const x of [-0.13, 0, 0.13]) {
-      ball(
-        headGroup,
-        [x, 0.272 - Math.abs(x) * 0.25, 0.015],
-        [0.021, 0.014, 0.125],
+      const rider = new THREE.Group();
+      cyclist.add(rider);
+      ball(rider, [0, 1.64, 0.37], [0.27, 0.2, 0.19], pants);
+      const torso = ball(rider, [0, 1.99, 0.17], [0.31, 0.43, 0.22], jersey);
+      torso.rotation.x = -0.24;
+      ball(rider, [0, 2.18, 0.13], [0.32, 0.15, 0.22], jerseyLight);
+      // A reflective strip on the back adds a familiar cycling-shirt detail.
+      const backStripe = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.045, 0.014),
+        helmetMat,
+      );
+      backStripe.position.set(0, 1.98, 0.392);
+      backStripe.rotation.x = -0.24;
+      rider.add(backStripe);
+      tube(rider, [0, 2.21, 0.04], [0, 2.37, -0.03], 0.09, skin);
+      const headGroup = new THREE.Group();
+      headGroup.position.set(0, 2.49, -0.065);
+      rider.add(headGroup);
+      ball(headGroup, [0, 0, 0], [0.205, 0.235, 0.19], skin);
+      ball(headGroup, [0, 0.035, 0.07], [0.211, 0.19, 0.17], hairMat);
+      ball(headGroup, [-0.205, -0.015, 0], [0.043, 0.07, 0.045], skin);
+      ball(headGroup, [0.205, -0.015, 0], [0.043, 0.07, 0.045], skin);
+      ball(headGroup, [0, -0.035, -0.18], [0.05, 0.06, 0.065], skin);
+      const helmet = new THREE.Mesh(
+        new THREE.SphereGeometry(
+          0.254,
+          18,
+          10,
+          0,
+          Math.PI * 2,
+          0,
+          Math.PI * 0.62,
+        ),
+        helmetMat,
+      );
+      helmet.position.y = 0.095;
+      helmet.scale.set(1, 0.8, 1.1);
+      helmet.castShadow = true;
+      headGroup.add(helmet);
+      for (const x of [-0.13, 0, 0.13]) {
+        ball(
+          headGroup,
+          [x, 0.272 - Math.abs(x) * 0.25, 0.015],
+          [0.021, 0.014, 0.125],
+          dark,
+        );
+      }
+      tube(headGroup, [-0.19, 0.04, 0.06], [-0.11, -0.19, -0.02], 0.012, dark);
+      tube(headGroup, [0.19, 0.04, 0.06], [0.11, -0.19, -0.02], 0.012, dark);
+      for (const side of [-1, 1]) {
+        const shoulder: Vec = [side * 0.275, 2.18, 0.12];
+        const elbow: Vec = [side * 0.36, 1.92, -0.36];
+        const hand: Vec = [side * 0.34, 1.53, -0.94];
+        tube(rider, shoulder, elbow, 0.082, jersey);
+        ball(rider, elbow, [0.065, 0.065, 0.065], skin);
+        tube(rider, elbow, hand, 0.058, skin);
+        ball(rider, hand, [0.065, 0.055, 0.075], skin);
+      }
+      const crank = new THREE.Group();
+      crank.position.set(0, 0.55, 0.04);
+      cyclist.add(crank);
+      const gear = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.14, 0.14, 0.025, 20),
         dark,
       );
+      gear.rotation.z = Math.PI / 2;
+      gear.position.x = 0.09;
+      crank.add(gear);
+      const legs = [-1, 1].map((side) => {
+        const group = new THREE.Group();
+        cyclist.add(group);
+        const upper = tube(group, [0, 0, 0], [0, 1, 0], 0.105, pants);
+        const lower = tube(group, [0, 0, 0], [0, 1, 0], 0.062, skin);
+        const knee = ball(group, [0, 0, 0], [0.075, 0.075, 0.075], skin);
+        const shoe = ball(group, [0, 0, 0], [0.085, 0.065, 0.17], shoes);
+        const pedal = new THREE.Mesh(
+          new THREE.BoxGeometry(0.19, 0.035, 0.13),
+          dark,
+        );
+        group.add(pedal);
+        const arm = tube(group, [0, 0, 0], [0, 1, 0], 0.023, metal);
+        return { side, upper, lower, knee, shoe, pedal, arm };
+      });
+      return { cyclist, wheels, crank, legs, phase: 0, traveled: 0 };
     }
-    tube(headGroup, [-0.19, 0.04, 0.06], [-0.11, -0.19, -0.02], 0.012, dark);
-    tube(headGroup, [0.19, 0.04, 0.06], [0.11, -0.19, -0.02], 0.012, dark);
-    for (const side of [-1, 1]) {
-      const shoulder: Vec = [side * 0.275, 2.18, 0.12];
-      const elbow: Vec = [side * 0.36, 1.92, -0.36];
-      const hand: Vec = [side * 0.34, 1.53, -0.94];
-      tube(rider, shoulder, elbow, 0.082, jersey);
-      ball(rider, elbow, [0.065, 0.065, 0.065], skin);
-      tube(rider, elbow, hand, 0.058, skin);
-      ball(rider, hand, [0.065, 0.055, 0.075], skin);
-    }
-    const crank = new THREE.Group();
-    crank.position.set(0, 0.55, 0.04);
-    cyclist.add(crank);
-    const gear = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.14, 0.14, 0.025, 20),
-      dark,
-    );
-    gear.rotation.z = Math.PI / 2;
-    gear.position.x = 0.09;
-    crank.add(gear);
-    const legs = [-1, 1].map((side) => {
-      const group = new THREE.Group();
-      cyclist.add(group);
-      const upper = tube(group, [0, 0, 0], [0, 1, 0], 0.105, pants);
-      const lower = tube(group, [0, 0, 0], [0, 1, 0], 0.062, skin);
-      const knee = ball(group, [0, 0, 0], [0.075, 0.075, 0.075], skin);
-      const shoe = ball(group, [0, 0, 0], [0.085, 0.065, 0.17], shoes);
-      const pedal = new THREE.Mesh(
-        new THREE.BoxGeometry(0.19, 0.035, 0.13),
-        dark,
-      );
-      group.add(pedal);
-      const arm = tube(group, [0, 0, 0], [0, 1, 0], 0.023, metal);
-      return { side, upper, lower, knee, shoe, pedal, arm };
-    });
+    const players = [createCyclist(1), createCyclist(2)];
+    players[1].cyclist.visible = false;
     function moveTube(
       mesh: THREE.Mesh,
       a: THREE.Vector3,
@@ -860,7 +897,10 @@ export default function RideScene({ speed, running, route }: Props) {
           : next === "sunset"
             ? "夕陽騎行：長者騎著單車穿過暖色山丘與林間小徑"
             : "森林騎行：長者騎著單車，沿著陽光灑落的林間小徑前進";
-      renderer.domElement.setAttribute("aria-label", `3D ${label}`);
+      renderer.domElement.setAttribute(
+        "aria-label",
+        `3D ${motionRef.current.playerCount === 2 ? "雙人競賽，左側綠色玩家 1、右側藍色玩家 2。" : ""}${label}`,
+      );
       for (const key of [
         "ground",
         "grass",
@@ -875,55 +915,61 @@ export default function RideScene({ speed, running, route }: Props) {
     };
     changeRouteRef.current(routeRef.current);
 
+    const framePlayers = () => {
+      const duel = motionRef.current.playerCount === 2;
+      if (duel) {
+        camera.position.set(2.7, 5.3, 15);
+        camera.lookAt(-1.7, 1.2, -9);
+      } else {
+        camera.position.set(3.5, 4.8, 12.3);
+        camera.lookAt(-3, 1.1, -10);
+      }
+      camera.fov = camera.aspect < 1.1 ? 58 : 48;
+      camera.updateProjectionMatrix();
+    };
     const resize = () => {
       const width = host.clientWidth,
         height = host.clientHeight;
       if (!width || !height) return;
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
-      camera.fov = width / height < 1.1 ? 58 : 48;
-      camera.updateProjectionMatrix();
+      framePlayers();
+    };
+    changePlayersRef.current = (count) => {
+      players[1].cyclist.visible = count === 2;
+      players.forEach((player, index) => {
+        player.cyclist.position.x =
+          count === 2 ? (index === 0 ? -1.1 : 1.1) : 0;
+        player.cyclist.position.z = 2;
+        player.traveled = 0;
+      });
+      framePlayers();
+      changeRouteRef.current?.(routeRef.current);
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
     resize();
+    changePlayersRef.current(motionRef.current.playerCount);
     let frame = 0,
-      previous = 0,
-      phase = 0;
-    const render = (now: number) => {
-      frame = requestAnimationFrame(render);
-      const dt = previous ? Math.min((now - previous) / 1000, 0.05) : 0;
-      previous = now;
-      const { speed: currentSpeed, running: isRunning } = motionRef.current;
-      const velocity = isRunning ? Math.max(0, currentSpeed) / 3.6 : 0;
-      const travel = velocity * dt;
-      if (travel > 0) {
-        for (const item of moving) {
-          item.z += travel;
-          if (item.z > 18) item.z -= 184;
-          item.object.position.z = item.z;
-          item.object.position.x =
-            (item.stream ? waterCenter(item.z) : curve(item.z)) + item.lateral;
-          item.object.updateMatrix();
-        }
-        for (const batch of batches) {
-          batch.entries.forEach((entry, i) =>
-            batch.mesh.setMatrixAt(
-              i,
-              matrix.multiplyMatrices(entry.source.matrix, entry.local),
-            ),
-          );
-          batch.mesh.instanceMatrix.needsUpdate = true;
-        }
-      }
-      phase += velocity * dt * 1.55;
+      previous = 0;
+    function animateCyclist(
+      model: ReturnType<typeof createCyclist>,
+      velocity: number,
+      dt: number,
+      isRunning: boolean,
+    ) {
+      model.phase += velocity * dt * 1.55;
+      model.traveled += velocity * dt;
+      const { cyclist, wheels, crank, legs, phase } = model;
       wheels.forEach((wheel) => {
-        wheel.rotation.x -= travel / 0.52;
+        wheel.rotation.x -= (velocity * dt) / 0.52;
       });
       crank.rotation.x = phase;
-      cyclist.rotation.z = velocity > 0 ? Math.sin(phase) * 0.014 : 0;
-      cyclist.position.y =
-        0.04 + (velocity > 0 ? Math.sin(phase * 2) * 0.006 : 0);
+      if (isRunning) {
+        cyclist.rotation.z = velocity > 0 ? Math.sin(phase) * 0.014 : 0;
+        cyclist.position.y =
+          0.04 + (velocity > 0 ? Math.sin(phase * 2) * 0.006 : 0);
+      }
       legs.forEach((leg) => {
         const angle = phase + (leg.side > 0 ? Math.PI : 0);
         const x = leg.side * 0.18;
@@ -962,6 +1008,66 @@ export default function RideScene({ speed, running, route }: Props) {
           0.023,
         );
       });
+    }
+    const render = (now: number) => {
+      frame = requestAnimationFrame(render);
+      const dt = previous ? Math.min((now - previous) / 1000, 0.05) : 0;
+      previous = now;
+      const {
+        speed: currentSpeed,
+        running: isRunning,
+        playerCount,
+        opponentSpeed,
+        playerDistances,
+      } = motionRef.current;
+      const duel = playerCount === 2;
+      const velocities = [currentSpeed, opponentSpeed].map((value) =>
+        isRunning && Number.isFinite(value) ? Math.max(0, value) / 3.6 : 0,
+      );
+      const velocity = duel
+        ? (velocities[0] + velocities[1]) / 2
+        : velocities[0];
+      const travel = velocity * dt;
+      if (travel > 0) {
+        for (const item of moving) {
+          item.z += travel;
+          if (item.z > 18) item.z -= 184;
+          item.object.position.z = item.z;
+          item.object.position.x =
+            (item.stream ? waterCenter(item.z) : curve(item.z)) + item.lateral;
+          item.object.updateMatrix();
+        }
+        for (const batch of batches) {
+          batch.entries.forEach((entry, i) =>
+            batch.mesh.setMatrixAt(
+              i,
+              matrix.multiplyMatrices(entry.source.matrix, entry.local),
+            ),
+          );
+          batch.mesh.instanceMatrix.needsUpdate = true;
+        }
+      }
+      players.forEach((player, index) => {
+        if (index === 0 || duel)
+          animateCyclist(player, velocities[index], dt, isRunning);
+      });
+      if (duel) {
+        const distances = playerDistances ?? [
+          players[0].traveled,
+          players[1].traveled,
+        ];
+        // Preserve who is ahead while compressing large gaps so neither rider
+        // leaves the shared camera. The race HUD retains the actual metres.
+        const distanceLead = distances[0] - distances[1];
+        const lead = Number.isFinite(distanceLead)
+          ? Math.tanh(distanceLead / 10) * 3.2
+          : 0;
+        players.forEach((player, index) => {
+          const z = 2 + (index === 0 ? -lead / 2 : lead / 2);
+          player.cyclist.position.z = z;
+          player.cyclist.position.x = curve(z) + (index === 0 ? -1.1 : 1.1);
+        });
+      }
       renderer.render(scene, camera);
     };
     frame = requestAnimationFrame(render);
@@ -970,6 +1076,7 @@ export default function RideScene({ speed, running, route }: Props) {
       cancelAnimationFrame(frame);
       observer.disconnect();
       changeRouteRef.current = null;
+      changePlayersRef.current = null;
       const geometries = new Set<THREE.BufferGeometry>();
       const allMaterials = new Set<THREE.Material>();
       scene.traverse((object) => {

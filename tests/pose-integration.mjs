@@ -143,7 +143,7 @@ try {
   );
   await page.getByRole("button", { name: "使用攝影機", exact: true }).click();
   await page
-    .getByText("姿態追蹤中", { exact: true })
+    .locator('[data-player-status="1"][data-tracking="true"]')
     .waitFor({ timeout: 45000 });
   await page.waitForFunction(
     () => (window.__poseIntegration?.frames || 0) >= 3,

@@ -39,7 +39,7 @@ try {
   const response = await page.goto(baseURL, { waitUntil: "networkidle" });
   assert.equal(response?.ok(), true, "the application loads successfully");
   await page.getByRole("heading", { name: "坐著動，也能去遠方。" }).waitFor();
-  await page.locator(".ride-card canvas").waitFor();
+  await page.locator(".ride-card canvas").first().waitFor();
   assert.equal(
     await page.locator(".speed-reading strong").textContent(),
     "0.0",
