@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { HighKneeEstimator } from "../src/lib/highKnee.ts";
+import { MarchingEstimator } from "../src/lib/marching.ts";
 import { analyzeLegPose } from "../src/lib/motion.ts";
 import type { PosePoint } from "../src/lib/motion.ts";
 
@@ -113,4 +114,39 @@ test("existing callers retain seated ankle requirements by default", () => {
   assert.equal(analyzeLegPose(points), null);
   points[27].visibility = 0.99;
   assert.ok(analyzeLegPose(points));
+});
+
+test("running analyzes low alternating knee motion without an absolute lift target or visible ankles", () => {
+  const marching = new MarchingEstimator();
+  const highKnees = new HighKneeEstimator();
+  let reading = marching.update(DOWN, DOWN, 0);
+  let highReading = highKnees.update(DOWN, DOWN, 0);
+  for (let time = 50; time <= 8000; time += 50) {
+    const cycle = Math.floor(time / 1000);
+    const phase = time % 1000;
+    const lift = phase > 200 && phase < 650 ? 0.07 : 0;
+    const points = pose(
+      DOWN + (cycle % 2 ? 0 : lift),
+      DOWN + (cycle % 2 ? lift : 0),
+    );
+    points[27].visibility = 0.1;
+    points[28].visibility = 0.1;
+    const motion = analyzeLegPose(points, 4 / 3, "running");
+    assert.ok(motion, "gentle running needs only shoulders, hips and knees");
+    assert.equal(
+      motion.signal,
+      0,
+      "missing ankle data must not enter seated pedal calculations",
+    );
+    assert.equal(analyzeLegPose(points, 4 / 3, "seated"), null);
+    reading = marching.update(motion.leftLift, motion.rightLift, time);
+    highReading = highKnees.update(motion.leftLift, motion.rightLift, time);
+  }
+  assert.equal(reading.steps, 8);
+  assert.equal(reading.cadence, 30);
+  assert.equal(
+    highReading.steps,
+    0,
+    "existing high-knee mode retains its distinct lift-height requirement",
+  );
 });

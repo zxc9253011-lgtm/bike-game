@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { CadenceEstimator } from "../lib/cadence";
 import { HighKneeEstimator } from "../lib/highKnee";
+import { MarchingEstimator } from "../lib/marching";
+import type { ExerciseMode } from "../lib/exercise";
 import { assetUrl } from "../lib/assets";
 import { PoseFreshness, PoseTimeoutError, poseDeadline } from "../lib/tracking";
 import {
@@ -12,7 +14,6 @@ import {
 import type { CameraRegion, PosePoint } from "../lib/motion";
 
 type TrackingStatus = "demo" | "loading" | "tracking" | "positioning" | "error";
-type ExerciseMode = "seated" | "standing";
 type PoseResult = { poseLandmarks?: PosePoint[] };
 type LocalPose = {
   setOptions: (options: {
@@ -44,6 +45,8 @@ export type PlayerAnalysis = {
   quality: number;
   feedback: string;
   highKnees: number;
+  /** Completed steps for either standing exercise; seated exercise remains 0. */
+  steps: number;
 };
 
 export type PoseCameraProps = {
@@ -125,15 +128,14 @@ const CONNECTIONS = [
 ];
 const JOINTS = Array.from({ length: 33 }, (_, index) => index);
 const positioningFeedback = (exerciseMode: ExerciseMode): string =>
-  exerciseMode === "standing"
-    ? "請讓肩膀、髖部與膝蓋入鏡"
-    : "請讓肩膀到雙腳入鏡";
+  exerciseMode !== "seated" ? "請讓肩膀、髖部與膝蓋入鏡" : "請讓肩膀到雙腳入鏡";
 const blankPlayer = (feedback = "請讓肩膀到雙腳入鏡"): PlayerAnalysis => ({
   cadence: 0,
   tracking: false,
   quality: 0,
   feedback,
   highKnees: 0,
+  steps: 0,
 });
 
 function cameraError(error: unknown): string {
@@ -181,11 +183,13 @@ export default function PoseCamera({
   const live = useRef({ running, exerciseMode });
   const seated = useRef([new CadenceEstimator(), new CadenceEstimator()]);
   const standing = useRef([new HighKneeEstimator(), new HighKneeEstimator()]);
+  const marching = useRef([new MarchingEstimator(), new MarchingEstimator()]);
   const analyses = useRef<[PlayerAnalysis, PlayerAnalysis]>([
     blankPlayer(positioningFeedback(exerciseMode)),
     blankPlayer(positioningFeedback(exerciseMode)),
   ]);
   const highKneeTotals = useRef<[number, number]>([0, 0]);
+  const marchingTotals = useRef<[number, number]>([0, 0]);
   const pauseAnalysis = useRef<() => void>(() => undefined);
   const resetAnalysis = useRef<() => void>(() => undefined);
   const [players, setPlayers] = useState<[PlayerAnalysis, PlayerAnalysis]>(
@@ -206,7 +210,9 @@ export default function PoseCamera({
     // These resets also apply when a source/player change retires the old effect.
     for (const estimator of seated.current) estimator.reset();
     for (const estimator of standing.current) estimator.reset();
+    for (const estimator of marching.current) estimator.reset();
     highKneeTotals.current = [0, 0];
+    marchingTotals.current = [0, 0];
     resetAnalysis.current();
   }, [resetKey, exerciseMode]);
 
@@ -243,10 +249,17 @@ export default function PoseCamera({
     );
     for (const estimator of seated.current) estimator.reset();
     for (const estimator of standing.current) estimator.suspend();
+    for (const estimator of marching.current) estimator.suspend();
     analyses.current = [
       {
         ...blankPlayer(positioningFeedback(live.current.exerciseMode)),
         highKnees: highKneeTotals.current[0],
+        steps:
+          live.current.exerciseMode === "running"
+            ? marchingTotals.current[0]
+            : live.current.exerciseMode === "standing"
+              ? highKneeTotals.current[0]
+              : 0,
       },
       {
         ...blankPlayer(
@@ -255,6 +268,12 @@ export default function PoseCamera({
             : "單人模式",
         ),
         highKnees: highKneeTotals.current[1],
+        steps:
+          live.current.exerciseMode === "running"
+            ? marchingTotals.current[1]
+            : live.current.exerciseMode === "standing"
+              ? highKneeTotals.current[1]
+              : 0,
       },
     ];
     setErrorMessage("");
@@ -285,6 +304,7 @@ export default function PoseCamera({
       if (disposed) return;
       for (const estimator of seated.current) estimator.reset();
       for (const estimator of standing.current) estimator.suspend();
+      for (const estimator of marching.current) estimator.suspend();
       analyses.current = analyses.current.map((player) => ({
         ...player,
         cadence: 0,
@@ -296,15 +316,20 @@ export default function PoseCamera({
       if (disposed) return;
       for (const estimator of seated.current) estimator.reset();
       for (const estimator of standing.current) estimator.reset();
+      for (const estimator of marching.current) estimator.reset();
       highKneeTotals.current = [0, 0];
+      marchingTotals.current = [0, 0];
       analyses.current = analyses.current.map((player) => ({
         ...player,
         cadence: 0,
         highKnees: 0,
+        steps: 0,
         feedback: player.tracking
           ? live.current.exerciseMode === "standing"
             ? "膝蓋抬到髖部高度"
-            : "請交替抬腳踩踏"
+            : live.current.exerciseMode === "running"
+              ? "輕鬆左右踏步，不必抬高膝蓋"
+              : "請交替抬腳踩踏"
           : positioningFeedback(live.current.exerciseMode),
       })) as [PlayerAnalysis, PlayerAnalysis];
       publish();
@@ -318,6 +343,7 @@ export default function PoseCamera({
     ) => {
       seated.current[session.index].reset();
       standing.current[session.index].suspend();
+      marching.current[session.index].suspend();
       if (clearPoints) session.points = undefined;
       analyses.current[session.index] = {
         ...analyses.current[session.index],
@@ -482,6 +508,12 @@ export default function PoseCamera({
         session.held = false;
         let cadence = 0;
         let highKnees = highKneeTotals.current[session.index];
+        let steps =
+          live.current.exerciseMode === "running"
+            ? marchingTotals.current[session.index]
+            : live.current.exerciseMode === "standing"
+              ? highKnees
+              : 0;
         let feedback = "已暫停";
         if (live.current.running) {
           const maxFrameGap = session.health.freshnessMs();
@@ -495,12 +527,27 @@ export default function PoseCamera({
             cadence = highKnee.cadence;
             highKnees = highKnee.steps;
             highKneeTotals.current[session.index] = highKnees;
+            steps = highKnees;
             feedback =
               highKnee.feedback === "raise"
                 ? "膝蓋抬到髖部高度"
                 : highKnee.feedback === "lower"
                   ? "放下抬起的膝蓋"
                   : "左右交替，做得很好";
+          } else if (live.current.exerciseMode === "running") {
+            const march = marching.current[session.index].update(
+              motion.leftLift,
+              motion.rightLift,
+              session.capturedAt,
+              maxFrameGap,
+            );
+            cadence = march.cadence;
+            steps = march.steps;
+            marchingTotals.current[session.index] = steps;
+            feedback =
+              march.feedback === "good"
+                ? "左右踏步，做得很好"
+                : "輕鬆左右踏步，不必抬高膝蓋";
           } else {
             cadence = seated.current[session.index].update(
               motion.signal,
@@ -513,6 +560,7 @@ export default function PoseCamera({
         analyses.current[session.index] = {
           cadence,
           highKnees,
+          steps,
           feedback,
           tracking: true,
           quality: motion.quality,
@@ -791,6 +839,7 @@ export default function PoseCamera({
       if (video) video.srcObject = null;
       for (const estimator of seated.current) estimator.reset();
       for (const estimator of standing.current) estimator.suspend();
+      for (const estimator of marching.current) estimator.suspend();
     };
   }, [mode, playerCount, retry]);
 
@@ -906,7 +955,11 @@ export default function PoseCamera({
             : `${playerCount === 2 ? "雙人 " : ""}AI 動作分析`}
         </span>
         <span style={{ fontSize: 8, color: "#c4d7ba" }}>
-          {exerciseMode === "standing" ? "站姿抬膝" : "坐姿踩踏"}
+          {exerciseMode === "running"
+            ? "跑步・原地踏步"
+            : exerciseMode === "standing"
+              ? "站姿抬膝"
+              : "坐姿踩踏"}
         </span>
       </div>
       <div
@@ -1022,6 +1075,7 @@ export default function PoseCamera({
               data-tracking={players[index].tracking ? "true" : "false"}
               data-cadence={players[index].cadence.toFixed(2)}
               data-high-knees={players[index].highKnees}
+              data-steps={players[index].steps}
               style={{
                 display: "block",
                 color: COLORS[index],
@@ -1100,7 +1154,10 @@ function DemoPose({
           phases[index] +=
             ((dt * state.current.cadences[index]) / 60) * Math.PI * 2;
         const phase = phases[index];
-        const standingPose = state.current.exerciseMode === "standing";
+        const standingPose = state.current.exerciseMode !== "seated";
+        const gentleMarch = state.current.exerciseMode === "running";
+        const kneeAmplitude = gentleMarch ? 14 : 78;
+        const footAmplitude = gentleMarch ? 18 : 82;
         const centerX =
           state.current.playerCount === 2 ? 120 + index * 240 : 240;
         const horizontalScale = state.current.playerCount === 2 ? 0.85 : 1;
@@ -1119,18 +1176,36 @@ function DemoPose({
           [22, 113],
           [-17, hipY],
           [17, hipY],
-          [-37, standingPose ? 253 - liftLeft * 78 : 230 - liftLeft * 24],
-          [37, standingPose ? 253 - liftRight * 78 : 230 - liftRight * 24],
+          [
+            -37,
+            standingPose ? 253 - liftLeft * kneeAmplitude : 230 - liftLeft * 24,
+          ],
+          [
+            37,
+            standingPose
+              ? 253 - liftRight * kneeAmplitude
+              : 230 - liftRight * 24,
+          ],
           [
             -22 + (standingPose ? 0 : Math.cos(phase) * 12),
-            standingPose ? 314 - liftLeft * 82 : 286 - liftLeft * 19,
+            standingPose ? 314 - liftLeft * footAmplitude : 286 - liftLeft * 19,
           ],
           [
             22 - (standingPose ? 0 : Math.cos(phase) * 12),
-            standingPose ? 314 - liftRight * 82 : 286 - liftRight * 19,
+            standingPose
+              ? 314 - liftRight * footAmplitude
+              : 286 - liftRight * 19,
           ],
-          [-40, standingPose ? 314 - liftLeft * 82 : 280 - liftLeft * 19],
-          [40, standingPose ? 314 - liftRight * 82 : 280 - liftRight * 19],
+          [
+            -40,
+            standingPose ? 314 - liftLeft * footAmplitude : 280 - liftLeft * 19,
+          ],
+          [
+            40,
+            standingPose
+              ? 314 - liftRight * footAmplitude
+              : 280 - liftRight * 19,
+          ],
           [-47, 165],
           [47, 165],
         ];
@@ -1146,7 +1221,7 @@ function DemoPose({
           ctx.moveTo(-42, 227);
           ctx.lineTo(-42, 301);
           ctx.stroke();
-        } else {
+        } else if (!gentleMarch) {
           ctx.strokeStyle = `${COLORS[index]}55`;
           ctx.lineWidth = 1;
           ctx.setLineDash([5, 5]);
@@ -1221,7 +1296,7 @@ function DemoPose({
       ref={canvas}
       width={480}
       height={360}
-      aria-label={`示範${playerCount === 2 ? "雙人" : "單人"}${exerciseMode === "standing" ? "站姿高抬膝" : "坐姿空中踩踏"}關節動畫，非即時攝影機影像`}
+      aria-label={`示範${playerCount === 2 ? "雙人" : "單人"}${exerciseMode === "running" ? "跑步・輕鬆原地踏步，不必抬高膝蓋" : exerciseMode === "standing" ? "站姿高抬膝" : "坐姿空中踩踏"}關節動畫，非即時攝影機影像`}
       style={{
         position: "absolute",
         inset: 0,

@@ -1,9 +1,17 @@
-import { Bike, Flag, Footprints, UserRound, UsersRound } from "lucide-react";
+import {
+  Activity,
+  Bike,
+  Flag,
+  Footprints,
+  UserRound,
+  UsersRound,
+} from "lucide-react";
+import type { ExerciseMode } from "../lib/exercise";
 import "./game-controls.css";
 
 export type GameSetupProps = {
-  exerciseMode: "seated" | "standing";
-  onExerciseModeChange: (mode: "seated" | "standing") => void;
+  exerciseMode: ExerciseMode;
+  onExerciseModeChange: (mode: ExerciseMode) => void;
   playerCount: 1 | 2;
   onPlayerCountChange: (count: 1 | 2) => void;
   raceMeters: number;
@@ -25,9 +33,11 @@ export default function GameSetup({
   compact = false,
 }: GameSetupProps) {
   const exerciseHint =
-    exerciseMode === "standing"
-      ? "左右交替，膝蓋抬到髖部高度才計分"
-      : "坐穩椅子，雙腳交替踩踏";
+    exerciseMode === "running"
+      ? "原地輕鬆交替踏步，不必抬高膝蓋"
+      : exerciseMode === "standing"
+        ? "左右交替，膝蓋抬到髖部高度才計分"
+        : "坐穩椅子，雙腳交替踩踏";
 
   if (compact) {
     return (
@@ -42,11 +52,12 @@ export default function GameSetup({
             value={exerciseMode}
             disabled={locked}
             onChange={(event) =>
-              onExerciseModeChange(event.target.value as "seated" | "standing")
+              onExerciseModeChange(event.target.value as ExerciseMode)
             }
           >
             <option value="seated">坐姿踩踏</option>
             <option value="standing">站姿高抬膝</option>
+            <option value="running">原地踏步跑步</option>
           </select>
         </label>
         <label className="game-setup-compact-field">
@@ -91,7 +102,11 @@ export default function GameSetup({
     <section className="game-setup" aria-label="遊戲設定">
       <div className="game-setup-field">
         <span className="game-setup-label">運動模式</span>
-        <div className="game-segmented" role="group" aria-label="運動模式">
+        <div
+          className="game-segmented exercise-mode-options"
+          role="group"
+          aria-label="運動模式"
+        >
           <button
             type="button"
             aria-pressed={exerciseMode === "seated"}
@@ -109,6 +124,16 @@ export default function GameSetup({
           >
             <Footprints size={17} aria-hidden="true" />
             站姿高抬膝
+          </button>
+          <button
+            type="button"
+            className="running-mode"
+            aria-pressed={exerciseMode === "running"}
+            disabled={locked}
+            onClick={() => onExerciseModeChange("running")}
+          >
+            <Activity size={17} aria-hidden="true" />
+            原地踏步跑步
           </button>
         </div>
         <p className="game-setup-hint">{exerciseHint}</p>

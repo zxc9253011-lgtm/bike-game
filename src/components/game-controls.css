@@ -33,6 +33,12 @@
   border-radius: 10px;
   background: #f2f5ed;
 }
+.exercise-mode-options {
+  flex-wrap: wrap;
+}
+.exercise-mode-options .running-mode {
+  flex-basis: 100%;
+}
 .game-segmented button {
   display: inline-flex;
   flex: 1;

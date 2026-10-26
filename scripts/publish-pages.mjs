@@ -92,13 +92,13 @@ try {
     "main",
     sourceFiles,
     root,
-    "Recover pose tracking and preserve skeleton overlays",
+    "Add gentle marching running mode for older adults",
   );
   await publish(
     "gh-pages",
     await filesUnder(join(root, "dist-pages")),
     join(root, "dist-pages"),
-    "Publish resilient camera motion tracking",
+    "Publish gentle marching and 3D running mode",
   );
   console.log(
     `Website files uploaded. GitHub Pages deploys the gh-pages branch automatically.\nWebsite: ${website}`,

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import type { ExerciseMode } from "../lib/exercise";
 
 type Route = "forest" | "coast" | "sunset";
 type Props = {
@@ -10,6 +11,7 @@ type Props = {
   opponentSpeed?: number;
   playerDistances?: [number, number];
   analysisActive?: boolean;
+  exerciseMode?: ExerciseMode;
 };
 type Vec = [number, number, number];
 
@@ -64,6 +66,7 @@ export default function RideScene({
   opponentSpeed = 0,
   playerDistances,
   analysisActive = false,
+  exerciseMode = "seated",
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const motionRef = useRef({
@@ -73,10 +76,12 @@ export default function RideScene({
     opponentSpeed,
     playerDistances,
     analysisActive,
+    exerciseMode,
   });
   const routeRef = useRef(route);
   const changeRouteRef = useRef<((next: Route) => void) | null>(null);
   const changePlayersRef = useRef<((count: 1 | 2) => void) | null>(null);
+  const changeActivityRef = useRef<(() => void) | null>(null);
   const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
@@ -87,6 +92,7 @@ export default function RideScene({
       opponentSpeed,
       playerDistances,
       analysisActive,
+      exerciseMode,
     };
   }, [
     speed,
@@ -95,10 +101,14 @@ export default function RideScene({
     opponentSpeed,
     playerDistances,
     analysisActive,
+    exerciseMode,
   ]);
   useEffect(() => {
     changePlayersRef.current?.(playerCount);
   }, [playerCount]);
+  useEffect(() => {
+    changeActivityRef.current?.();
+  }, [exerciseMode]);
   useEffect(() => {
     routeRef.current = route;
     changeRouteRef.current?.(route);
@@ -844,6 +854,66 @@ export default function RideScene({
     }
     const players = [createCyclist(1), createCyclist(2)];
     players[1].cyclist.visible = false;
+
+    // Runners share the same world and renderer, while their body, limbs and
+    // phases remain independent from both bicycles and the other player.
+    function createRunner(player: 1 | 2) {
+      const runner = new THREE.Group();
+      runner.name = player === 1 ? "P1-GreenRunner" : "P2-BlueRunner";
+      runner.position.set(0, 0.04, 2);
+      runner.scale.setScalar(1.06);
+      scene.add(runner);
+      const body = new THREE.Group();
+      runner.add(body);
+      const jersey = mat(player === 1 ? "#568e7b" : "#4a83c2");
+      const jerseyLight = mat(player === 1 ? "#6ca18b" : "#72a4db");
+      const pants = mat("#3c5149");
+      const skin = mat("#dfb58f");
+      const hair = mat("#dddccf");
+      const shoeMat = mat("#efdfbf");
+      const soleMat = mat("#56655c");
+      const reflective = mat("#f1e8cd");
+      ball(body, [0, 1.17, 0.025], [0.25, 0.18, 0.19], pants);
+      const torso = ball(body, [0, 1.61, -0.015], [0.3, 0.42, 0.21], jersey);
+      torso.rotation.x = -0.055;
+      ball(body, [0, 1.84, -0.025], [0.31, 0.13, 0.2], jerseyLight);
+      const stripe = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.045, 0.014),
+        reflective,
+      );
+      stripe.position.set(0, 1.64, 0.194);
+      stripe.rotation.x = -0.055;
+      body.add(stripe);
+      tube(body, [0, 1.94, -0.035], [0, 2.1, -0.04], 0.09, skin);
+      const head = new THREE.Group();
+      head.position.set(0, 2.25, -0.05);
+      body.add(head);
+      ball(head, [0, 0, 0], [0.205, 0.235, 0.19], skin);
+      ball(head, [0, 0.05, 0.055], [0.213, 0.2, 0.175], hair);
+      ball(head, [-0.205, -0.01, 0], [0.043, 0.07, 0.045], skin);
+      ball(head, [0.205, -0.01, 0], [0.043, 0.07, 0.045], skin);
+      ball(head, [0, -0.035, -0.18], [0.05, 0.06, 0.065], skin);
+      const legs = [-1, 1].map((side) => {
+        const upper = tube(body, [0, 0, 0], [0, 1, 0], 0.098, pants);
+        const lower = tube(body, [0, 0, 0], [0, 1, 0], 0.061, skin);
+        const knee = ball(body, [0, 0, 0], [0.073, 0.073, 0.073], skin);
+        const shoe = new THREE.Group();
+        ball(shoe, [0, 0, -0.055], [0.092, 0.075, 0.18], shoeMat);
+        ball(shoe, [0, -0.05, -0.055], [0.095, 0.025, 0.185], soleMat);
+        body.add(shoe);
+        return { side, upper, lower, knee, shoe };
+      });
+      const arms = [-1, 1].map((side) => ({
+        side,
+        upper: tube(body, [0, 0, 0], [0, 1, 0], 0.08, jersey),
+        lower: tube(body, [0, 0, 0], [0, 1, 0], 0.054, skin),
+        elbow: ball(body, [0, 0, 0], [0.061, 0.061, 0.061], skin),
+        hand: ball(body, [0, 0, 0], [0.065, 0.075, 0.06], skin),
+      }));
+      runner.visible = false;
+      return { runner, body, legs, arms, phase: 0, traveled: 0 };
+    }
+    const runners = [createRunner(1), createRunner(2)];
     function moveTube(
       mesh: THREE.Mesh,
       a: THREE.Vector3,
@@ -903,11 +973,13 @@ export default function RideScene({
           (batch.kind === "coast" ? next === "coast" : next !== "coast");
       });
       const label =
-        next === "coast"
-          ? "海岸騎行：長者騎著單車沿著棕櫚樹與藍色海洋前進"
-          : next === "sunset"
-            ? "夕陽騎行：長者騎著單車穿過暖色山丘與林間小徑"
-            : "森林騎行：長者騎著單車，沿著陽光灑落的林間小徑前進";
+        motionRef.current.exerciseMode === "running"
+          ? `${next === "coast" ? "海岸" : next === "sunset" ? "夕陽" : "森林"}原地踏步跑步：長者沿著自然小徑步行與慢跑`
+          : next === "coast"
+            ? "海岸騎行：長者騎著單車沿著棕櫚樹與藍色海洋前進"
+            : next === "sunset"
+              ? "夕陽騎行：長者騎著單車穿過暖色山丘與林間小徑"
+              : "森林騎行：長者騎著單車，沿著陽光灑落的林間小徑前進";
       renderer.domElement.setAttribute(
         "aria-label",
         `3D ${motionRef.current.playerCount === 2 ? "雙人競賽，左側綠色玩家 1、右側藍色玩家 2。" : ""}${label}`,
@@ -947,15 +1019,34 @@ export default function RideScene({
       framePlayers();
     };
     changePlayersRef.current = (count) => {
-      players[1].cyclist.visible = count === 2;
       players.forEach((player, index) => {
-        player.cyclist.position.x =
-          count === 2 ? (index === 0 ? -1.1 : 1.1) : 0;
-        player.cyclist.position.z = 2;
+        const x = count === 2 ? (index === 0 ? -1.1 : 1.1) : 0;
+        player.cyclist.position.set(x, 0.04, 2);
+        runners[index].runner.position.set(x, 0.04, 2);
         player.traveled = 0;
+        runners[index].traveled = 0;
       });
+      changeActivityRef.current?.();
       framePlayers();
       changeRouteRef.current?.(routeRef.current);
+    };
+    changeActivityRef.current = () => {
+      const isRunningMode = motionRef.current.exerciseMode === "running";
+      players.forEach((player, index) => {
+        const present = index === 0 || motionRef.current.playerCount === 2;
+        player.cyclist.visible = present && !isRunningMode;
+        runners[index].runner.visible = present && isRunningMode;
+      });
+      renderer.domElement.setAttribute(
+        "data-activity",
+        isRunningMode ? "running" : "cycling",
+      );
+      renderer.domElement.setAttribute(
+        "aria-label",
+        isRunningMode
+          ? "3D 原地踏步跑步：長者沿著林間小徑步行與慢跑"
+          : "3D 森林騎行：長者騎著單車，沿著陽光灑落的林間小徑前進",
+      );
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
@@ -1020,6 +1111,78 @@ export default function RideScene({
         );
       });
     }
+    function animateRunner(
+      model: ReturnType<typeof createRunner>,
+      velocity: number,
+      dt: number,
+      isRunning: boolean,
+    ) {
+      const moving = isRunning && velocity > 0;
+      if (moving) {
+        model.phase +=
+          dt * Math.PI * 2 * Math.min(1.5, Math.max(0.22, velocity * 0.55));
+        model.traveled += velocity * dt;
+      }
+      const stride = moving ? Math.min(0.4, 0.16 + velocity * 0.09) : 0;
+      const lift = moving ? Math.min(0.26, 0.08 + velocity * 0.055) : 0;
+      model.body.position.y = moving
+        ? Math.abs(Math.sin(model.phase)) * Math.min(0.035, velocity * 0.012)
+        : 0;
+      model.body.rotation.z = moving ? Math.sin(model.phase) * 0.022 : 0;
+      model.legs.forEach((leg) => {
+        const angle = model.phase + (leg.side > 0 ? Math.PI : 0);
+        const wave = moving ? Math.sin(angle) : 0;
+        const x = leg.side * 0.17;
+        const hip = new THREE.Vector3(x, 1.14, 0.025);
+        const ankle = new THREE.Vector3(
+          x,
+          0.1 + Math.max(0, -Math.cos(angle)) * lift,
+          wave * stride,
+        );
+        const hipToAnkle = ankle.clone().sub(hip);
+        const distance = Math.min(hipToAnkle.length(), 1.095);
+        const direction = hipToAnkle.clone().normalize();
+        ankle.copy(hip).addScaledVector(direction, distance);
+        const along =
+          (0.56 * 0.56 - 0.54 * 0.54 + distance * distance) / (2 * distance);
+        const bend = Math.sqrt(Math.max(0, 0.56 * 0.56 - along * along));
+        const normal = new THREE.Vector3(
+          0,
+          -direction.z,
+          direction.y,
+        ).normalize();
+        if (normal.z > 0) normal.negate();
+        const knee = hip
+          .clone()
+          .addScaledVector(direction, along)
+          .addScaledVector(normal, bend);
+        moveTube(leg.upper, hip, knee, 0.098);
+        moveTube(leg.lower, knee, ankle, 0.061);
+        leg.knee.position.copy(knee);
+        leg.shoe.position.copy(ankle);
+        leg.shoe.rotation.x = moving ? Math.max(0, Math.cos(angle)) * 0.16 : 0;
+      });
+      model.arms.forEach((arm) => {
+        const angle = model.phase + (arm.side > 0 ? Math.PI : 0);
+        const swing = moving ? Math.sin(angle) : 0;
+        const bend = moving ? Math.min(1, velocity / 2.1) : 0;
+        const shoulder = new THREE.Vector3(arm.side * 0.275, 1.86, -0.02);
+        const elbow = new THREE.Vector3(
+          arm.side * 0.335,
+          1.54,
+          -swing * 0.2 + 0.02,
+        );
+        const hand = new THREE.Vector3(
+          arm.side * 0.335,
+          1.25 + bend * 0.28,
+          elbow.z - 0.05 - bend * 0.23,
+        );
+        moveTube(arm.upper, shoulder, elbow, 0.08);
+        moveTube(arm.lower, elbow, hand, 0.054);
+        arm.elbow.position.copy(elbow);
+        arm.hand.position.copy(hand);
+      });
+    }
     const render = (now: number) => {
       frame = requestAnimationFrame(render);
       // Leave GPU time for camera inference while retaining the same scene.
@@ -1037,6 +1200,7 @@ export default function RideScene({
         playerCount,
         opponentSpeed,
         playerDistances,
+        exerciseMode,
       } = motionRef.current;
       const duel = playerCount === 2;
       const velocities = [currentSpeed, opponentSpeed].map((value) =>
@@ -1065,14 +1229,25 @@ export default function RideScene({
           batch.mesh.instanceMatrix.needsUpdate = true;
         }
       }
-      players.forEach((player, index) => {
-        if (index === 0 || duel)
-          animateCyclist(player, velocities[index], dt, isRunning);
-      });
+      if (exerciseMode === "running") {
+        runners.forEach((runner, index) => {
+          if (index === 0 || duel)
+            animateRunner(runner, velocities[index], dt, isRunning);
+        });
+      } else {
+        players.forEach((player, index) => {
+          if (index === 0 || duel)
+            animateCyclist(player, velocities[index], dt, isRunning);
+        });
+      }
       if (duel) {
         const distances = playerDistances ?? [
-          players[0].traveled,
-          players[1].traveled,
+          exerciseMode === "running"
+            ? runners[0].traveled
+            : players[0].traveled,
+          exerciseMode === "running"
+            ? runners[1].traveled
+            : players[1].traveled,
         ];
         // Preserve who is ahead while compressing large gaps so neither rider
         // leaves the shared camera. The race HUD retains the actual metres.
@@ -1084,6 +1259,8 @@ export default function RideScene({
           const z = 2 + (index === 0 ? -lead / 2 : lead / 2);
           player.cyclist.position.z = z;
           player.cyclist.position.x = curve(z) + (index === 0 ? -1.1 : 1.1);
+          runners[index].runner.position.z = z;
+          runners[index].runner.position.x = player.cyclist.position.x;
         });
       }
       renderer.render(scene, camera);
@@ -1095,6 +1272,7 @@ export default function RideScene({
       observer.disconnect();
       changeRouteRef.current = null;
       changePlayersRef.current = null;
+      changeActivityRef.current = null;
       const geometries = new Set<THREE.BufferGeometry>();
       const allMaterials = new Set<THREE.Material>();
       scene.traverse((object) => {

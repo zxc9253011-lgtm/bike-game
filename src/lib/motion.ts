@@ -1,3 +1,5 @@
+import type { ExerciseMode } from "./exercise";
+
 export type PosePoint = {
   x: number;
   y: number;
@@ -47,17 +49,17 @@ export function visiblePoint(
 export function analyzeLegPose(
   points: PosePoint[] | undefined,
   imageAspect = 4 / 3,
-  exerciseMode: "seated" | "standing" = "seated",
+  exerciseMode: ExerciseMode = "seated",
 ): {
   signal: number;
   leftLift: number;
   rightLift: number;
   quality: number;
 } | null {
-  // Standing high knees use hips and knees. A raised foot is often hidden by
-  // the thigh or outside the camera frame, so ankles must not gate this mode.
+  // Standing modes use hips and knees. A foot can be hidden while marching,
+  // so ankles must not gate either high knees or gentle running in place.
   const legJoints =
-    exerciseMode === "standing" ? [23, 24, 25, 26] : [23, 24, 25, 26, 27, 28];
+    exerciseMode === "seated" ? [23, 24, 25, 26, 27, 28] : [23, 24, 25, 26];
   if (
     !points ||
     !legJoints.every((joint) => visiblePoint(points[joint])) ||

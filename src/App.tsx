@@ -43,6 +43,12 @@ import GameSetup from "./components/GameSetup";
 import RaceHud from "./components/RaceHud";
 import { assetUrl } from "./lib/assets";
 import { advanceRace, createRaceState } from "./lib/race";
+import {
+  exerciseNames,
+  exerciseSpeed,
+  usesSteps,
+  type ExerciseMode,
+} from "./lib/exercise";
 
 type RouteId = "forest" | "coast" | "sunset";
 type Tracking = "demo" | "loading" | "tracking" | "positioning" | "error";
@@ -52,7 +58,7 @@ type RideRecord = {
   distance: number;
   route: string;
   playerCount?: 1 | 2;
-  exerciseMode?: "seated" | "standing";
+  exerciseMode?: ExerciseMode;
   secondDistance?: number;
   winner?: 1 | 2 | "tie";
 };
@@ -124,9 +130,7 @@ export default function App() {
   const [demoCadence2, setDemoCadence2] = useState(38);
   const [cameraCadence, setCameraCadence] = useState(0);
   const [tracking, setTracking] = useState<Tracking>("demo");
-  const [exerciseMode, setExerciseMode] = useState<"seated" | "standing">(
-    "seated",
-  );
+  const [exerciseMode, setExerciseMode] = useState<ExerciseMode>("seated");
   const [playerCount, setPlayerCount] = useState<1 | 2>(1);
   const [raceMeters, setRaceMeters] = useState(100);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -139,6 +143,7 @@ export default function App() {
       quality: 0,
       feedback: "請讓身體入鏡",
       highKnees: 0,
+      steps: 0,
     },
     {
       cadence: 0,
@@ -146,6 +151,7 @@ export default function App() {
       quality: 0,
       feedback: "請讓身體入鏡",
       highKnees: 0,
+      steps: 0,
     },
   ]);
   const [cameraCollapsed, setCameraCollapsed] = useState(false);
@@ -175,7 +181,7 @@ export default function App() {
         ? cameraCadence
         : 0
     : 0;
-  const speed = Math.min(30, cadence * 0.28);
+  const speed = exerciseSpeed(exerciseMode, cadence);
   const cadence2 =
     running && playerCount === 2
       ? mode === "demo"
@@ -184,7 +190,10 @@ export default function App() {
           ? players[1].cadence
           : 0
       : 0;
-  const speed2 = Math.min(30, cadence2 * 0.28);
+  const speed2 = exerciseSpeed(exerciseMode, cadence2);
+  const stepping = usesSteps(exerciseMode);
+  const runningMode = exerciseMode === "running";
+  const exerciseName = exerciseNames[exerciseMode];
   const raceTitle =
     session.result?.winner === "tie"
       ? "兩位玩家平手！"
@@ -440,13 +449,15 @@ export default function App() {
 
   const setupProps = {
     exerciseMode,
-    onExerciseModeChange: (value: "seated" | "standing") => {
+    onExerciseModeChange: (value: ExerciseMode) => {
       if (value === exerciseMode) return;
       changeSetup(
         () => setExerciseMode(value),
-        value === "standing"
-          ? "已切換站姿高抬膝；膝蓋抬到髖部高度才計分。"
-          : "已切換坐姿踩踏，請坐穩椅子。",
+        value === "running"
+          ? "已切換原地踏步跑步；輕鬆左右交替踏步就能前進，不必抬高膝蓋。"
+          : value === "standing"
+            ? "已切換站姿高抬膝；膝蓋抬到髖部高度才計分。"
+            : "已切換坐姿踩踏，請坐穩椅子。",
       );
     },
     playerCount,
@@ -528,12 +539,18 @@ export default function App() {
               YOUR EVERYDAY LITTLE ADVENTURE
             </div>
             <h1>
-              {exerciseMode === "standing"
-                ? "站著動，也能去遠方"
-                : "坐著動，也能去遠方"}
+              {runningMode
+                ? "輕鬆踏步，也能去遠方"
+                : exerciseMode === "standing"
+                  ? "站著動，也能去遠方"
+                  : "坐著動，也能去遠方"}
               <span>。</span>
             </h1>
-            <p>跟著自己的節奏踩踏，讓每一小步，都有好風景。</p>
+            <p>
+              {runningMode
+                ? "原地交替小步踏動，讓畫面中的你跑進好風景。"
+                : "跟著自己的節奏踩踏，讓每一小步，都有好風景。"}
+            </p>
           </div>
           <div className="heading-note">
             <span className="note-icon">
@@ -563,6 +580,7 @@ export default function App() {
                 opponentSpeed={speed2}
                 playerDistances={session.distances}
                 analysisActive={mode === "camera"}
+                exerciseMode={exerciseMode}
               />
               <div className="scene-fullscreen-setup">
                 <GameSetup {...setupProps} compact />
@@ -578,7 +596,11 @@ export default function App() {
                     <selected.icon size={13} />
                     {selected.label}
                     <span className="scene-dot">·</span>
-                    {playerCount === 2 ? "雙人競賽" : "自由騎行"}
+                    {playerCount === 2
+                      ? "雙人競賽"
+                      : runningMode
+                        ? "自由跑步"
+                        : "自由騎行"}
                   </span>
                 </div>
                 <div className="scene-tools">
@@ -666,7 +688,7 @@ export default function App() {
                           ? `玩家 1 ${players[0].tracking ? "已辨識" : "未入鏡"} · 玩家 2 ${players[1].tracking ? "已辨識" : "未入鏡"}`
                           : players[0].tracking
                             ? "已偵測到你，標點會跟著動作移動"
-                            : exerciseMode === "standing"
+                            : stepping
                               ? "請讓肩膀、髖部與膝蓋入鏡"
                               : "請讓肩膀、膝蓋和雙腳完整入鏡"}
                 </div>
@@ -694,17 +716,19 @@ export default function App() {
                 {running
                   ? cadence > 0
                     ? "微風與你同行"
-                    : "等你開始踩踏"
+                    : runningMode
+                      ? "等你開始踏步"
+                      : "等你開始踩踏"
                   : "準備好就出發"}
                 <span className="status-separator" />
-                {exerciseMode === "standing" ? "站姿高抬膝" : "坐姿踩踏"}
+                {exerciseName}
               </div>
               <div className="scene-bottom">
                 <div className="ride-metrics">
                   <div>
                     <span>
                       <Route size={14} />
-                      騎行距離
+                      {runningMode ? "跑步距離" : "騎行距離"}
                     </span>
                     <strong>
                       {distance.toFixed(2)}
@@ -715,7 +739,7 @@ export default function App() {
                   <div>
                     <span>
                       <Clock3 size={14} />
-                      騎行時間
+                      {runningMode ? "跑步時間" : "騎行時間"}
                     </span>
                     <strong>{formatTime(elapsed)}</strong>
                   </div>
@@ -735,12 +759,18 @@ export default function App() {
                     : running
                       ? "暫停一下"
                       : saved
-                        ? "再騎一趟"
+                        ? runningMode
+                          ? "再跑一趟"
+                          : "再騎一趟"
                         : elapsed > 0
-                          ? "繼續騎行"
+                          ? runningMode
+                            ? "繼續跑步"
+                            : "繼續騎行"
                           : playerCount === 2
                             ? "開始競賽"
-                            : "開始騎行"}
+                            : runningMode
+                              ? "開始跑步"
+                              : "開始騎行"}
                   {!running && <ArrowRight size={18} />}
                 </button>
                 <button
@@ -827,9 +857,11 @@ export default function App() {
               <div>
                 <strong>動得舒服，比動得快更重要。</strong>
                 <p>
-                  {exerciseMode === "standing"
-                    ? "請在穩固、無障礙的空間站立，量力交替高抬膝；需要支撐時可扶穩固椅背。"
-                    : "請坐穩有靠背的椅子，依自己的體力輕鬆踩踏；若感到不適，隨時停下休息。"}
+                  {runningMode
+                    ? "原地交替小步踏動，依舒服的高度踏步即可；需要支撐時可扶穩固椅背。"
+                    : exerciseMode === "standing"
+                      ? "請在穩固、無障礙的空間站立，量力交替高抬膝；需要支撐時可扶穩固椅背。"
+                      : "請坐穩有靠背的椅子，依自己的體力輕鬆踩踏；若感到不適，隨時停下休息。"}
                 </p>
               </div>
               <Leaf className="reminder-leaf" size={35} strokeWidth={1.1} />
@@ -843,9 +875,11 @@ export default function App() {
                   <AudioLines size={17} />
                   {playerCount === 2
                     ? "玩家 1 運動節奏"
-                    : exerciseMode === "standing"
-                      ? "你的高抬膝節奏"
-                      : "你的踩踏節奏"}
+                    : runningMode
+                      ? "你的踏步節奏"
+                      : exerciseMode === "standing"
+                        ? "你的高抬膝節奏"
+                        : "你的踩踏節奏"}
                 </h2>
                 <span className="live-label">
                   <span />
@@ -857,18 +891,26 @@ export default function App() {
                 <span>km/h</span>
                 <span className="speed-illustration">
                   <Wind size={27} />
-                  <Bike size={43} strokeWidth={1.2} />
+                  {runningMode ? (
+                    <Footprints size={43} strokeWidth={1.2} />
+                  ) : (
+                    <Bike size={43} strokeWidth={1.2} />
+                  )}
                 </span>
               </div>
               <div className="pace-divider" />
               <div className="cadence-reading">
                 <span>
                   <Footprints size={16} />
-                  {exerciseMode === "standing" ? "有效抬膝頻率" : "踩踏頻率"}
+                  {runningMode
+                    ? "踏步頻率"
+                    : exerciseMode === "standing"
+                      ? "有效抬膝頻率"
+                      : "踩踏頻率"}
                 </span>
                 <strong data-metric="cadence">
-                  {Math.round(cadence * (exerciseMode === "standing" ? 2 : 1))}
-                  <small>{exerciseMode === "standing" ? "步/分" : "rpm"}</small>
+                  {Math.round(cadence * (stepping ? 2 : 1))}
+                  <small>{stepping ? "步/分" : "rpm"}</small>
                 </strong>
               </div>
               <div className="pace-bars" aria-hidden="true">
@@ -885,15 +927,18 @@ export default function App() {
                 {!running
                   ? "按下開始，跟著你的節奏出發"
                   : cadence === 0
-                    ? "輕輕抬腿，開始你的踩踏"
+                    ? runningMode
+                      ? "輕鬆左右交替踏步，不必抬高膝蓋"
+                      : "輕輕抬腿，開始你的踩踏"
                     : cadence > 70
                       ? "很有活力！記得保持呼吸順暢"
                       : "很棒，保持舒服的節奏就好"}
                 <Leaf size={13} />
               </p>
-              {exerciseMode === "standing" && mode === "camera" && (
+              {stepping && mode === "camera" && (
                 <p className="high-knee-feedback" data-player-feedback="1">
-                  {players[0].feedback} · 有效抬膝 {players[0].highKnees} 次
+                  {players[0].feedback} ·{" "}
+                  {runningMode ? "有效踏步" : "有效抬膝"} {players[0].steps} 次
                 </p>
               )}
               {playerCount === 2 && (
@@ -910,20 +955,20 @@ export default function App() {
                   </div>
                   <div>
                     <span>
-                      {exerciseMode === "standing" ? "抬膝頻率" : "踩踏頻率"}
+                      {runningMode
+                        ? "踏步頻率"
+                        : exerciseMode === "standing"
+                          ? "抬膝頻率"
+                          : "踩踏頻率"}
                     </span>
                     <strong data-metric="cadence">
-                      {Math.round(
-                        cadence2 * (exerciseMode === "standing" ? 2 : 1),
-                      )}
-                      <small>
-                        {exerciseMode === "standing" ? "步/分" : "rpm"}
-                      </small>
+                      {Math.round(cadence2 * (stepping ? 2 : 1))}
+                      <small>{stepping ? "步/分" : "rpm"}</small>
                     </strong>
                   </div>
-                  {exerciseMode === "standing" && mode === "camera" && (
+                  {stepping && mode === "camera" && (
                     <p data-player-feedback="2">
-                      {players[1].feedback} · {players[1].highKnees} 次
+                      {players[1].feedback} · {players[1].steps} 次
                     </p>
                   )}
                 </div>
@@ -979,7 +1024,7 @@ export default function App() {
                 </span>
                 <div>
                   <strong>
-                    {exerciseMode === "standing" ? "站姿高抬膝" : "坐姿踩踏"}
+                    {exerciseName}
                     {playerCount === 2 ? " · 雙人競賽" : " · 單人漫遊"}
                   </strong>
                   <p>人體標點已放在遊戲畫面右上角，放大後也能看見。</p>
@@ -1008,15 +1053,15 @@ export default function App() {
                     <label htmlFor="demo-speed">
                       {playerCount === 2
                         ? "玩家 1 示範速度"
-                        : exerciseMode === "standing"
-                          ? "試試不同的高抬膝速度"
-                          : "試試不同的踩踏速度"}
+                        : runningMode
+                          ? "試試不同的踏步速度"
+                          : exerciseMode === "standing"
+                            ? "試試不同的高抬膝速度"
+                            : "試試不同的踩踏速度"}
                     </label>
                     <span>
-                      {demoCadence * (exerciseMode === "standing" ? 2 : 1)}
-                      <small>
-                        {exerciseMode === "standing" ? "步/分" : "rpm"}
-                      </small>
+                      {demoCadence * (stepping ? 2 : 1)}
+                      <small>{stepping ? "步/分" : "rpm"}</small>
                     </span>
                   </div>
                   <input
@@ -1033,10 +1078,18 @@ export default function App() {
                   />
                   <div className="range-labels">
                     <span>
-                      {exerciseMode === "standing" ? "慢慢抬" : "慢慢踩"}
+                      {runningMode
+                        ? "慢慢踏"
+                        : exerciseMode === "standing"
+                          ? "慢慢抬"
+                          : "慢慢踩"}
                     </span>
                     <span>
-                      {exerciseMode === "standing" ? "活力抬" : "活力踩"}
+                      {runningMode
+                        ? "輕快踏"
+                        : exerciseMode === "standing"
+                          ? "活力抬"
+                          : "活力踩"}
                     </span>
                   </div>
                   {playerCount === 2 && (
@@ -1044,10 +1097,8 @@ export default function App() {
                       <div>
                         <label htmlFor="demo-speed-2">玩家 2 示範速度</label>
                         <span>
-                          {demoCadence2 * (exerciseMode === "standing" ? 2 : 1)}
-                          <small>
-                            {exerciseMode === "standing" ? "步/分" : "rpm"}
-                          </small>
+                          {demoCadence2 * (stepping ? 2 : 1)}
+                          <small>{stepping ? "步/分" : "rpm"}</small>
                         </span>
                       </div>
                       <input
@@ -1077,9 +1128,11 @@ export default function App() {
                   <p>
                     {playerCount === 2 &&
                       "兩人共用一個鏡頭，分別在畫面左右區域。"}
-                    {exerciseMode === "standing"
-                      ? "鏡頭需拍到肩膀、髖部與膝蓋；抬膝時腳踝短暫遮住仍可辨識。"
-                      : "鏡頭需拍到肩膀、髖部、膝蓋和腳踝。"}
+                    {runningMode
+                      ? "鏡頭需拍到肩膀、髖部與膝蓋；原地小步交替即可，不必把膝蓋抬到特定高度。"
+                      : exerciseMode === "standing"
+                        ? "鏡頭需拍到肩膀、髖部與膝蓋；抬膝時腳踝短暫遮住仍可辨識。"
+                        : "鏡頭需拍到肩膀、髖部、膝蓋和腳踝。"}
                     <br />
                     <small>影像僅在裝置分析，不錄影、不上傳。</small>
                   </p>
@@ -1216,7 +1269,7 @@ export default function App() {
                       <div>
                         <h3>選擇運動方式與玩法</h3>
                         <p>
-                          坐姿模式請坐穩有靠背的椅子；站姿模式請留足活動空間，交替把膝蓋抬到髖部高度。可選單人漫遊或同畫面的雙人競賽。
+                          坐姿模式請坐穩椅子；高抬膝模式需交替把膝蓋抬到髖部附近。原地踏步跑步模式只要輕鬆交替踏步，不要求膝蓋抬多高。三種模式都可選單人漫遊或雙人競賽。
                         </p>
                       </div>
                     </li>
@@ -1236,9 +1289,9 @@ export default function App() {
                       <div>
                         <h3>按下開始，左右交替動起來</h3>
                         <p>
-                          坐姿像踩空中腳踏車一樣交替抬腿；站姿需完成「抬高、放下」並左右交替才計分。雙人競賽有
+                          坐姿交替踩踏，高抬膝需完成抬高再放下；跑步模式只要原地交替小步踏動，就會帶動3D角色跑步。雙人競賽有
                           3
-                          秒倒數，各自控制一台車，先到終點者獲勝。示範模式可分別調整兩人的速度。
+                          秒倒數，各自控制自己的角色，先到終點者獲勝。示範模式可分別調整兩人的速度。
                         </p>
                       </div>
                     </li>
@@ -1327,9 +1380,8 @@ export default function App() {
                               <span>{formatTime(item.seconds)}</span>
                               {item.exerciseMode && (
                                 <span>
-                                  {item.exerciseMode === "standing"
-                                    ? "站姿高抬膝"
-                                    : "坐姿踩踏"}
+                                  {exerciseNames[item.exerciseMode] ||
+                                    "坐姿踩踏"}
                                   {item.winner
                                     ? item.winner === "tie"
                                       ? " · 平手"
@@ -1416,7 +1468,9 @@ export default function App() {
                     <br />
                     {mode === "demo"
                       ? "本次為示範騎行，里程為虛擬模擬。"
-                      : "騎行距離為依踩踏節奏推估的遊戲里程。"}
+                      : runningMode
+                        ? "跑步距離為依踏步節奏推估的遊戲里程。"
+                        : "騎行距離為依踩踏節奏推估的遊戲里程。"}
                   </p>
                   <button className="primary-button" onClick={resetRide}>
                     <RotateCcw size={17} />

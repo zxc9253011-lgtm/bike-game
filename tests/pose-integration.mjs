@@ -141,6 +141,12 @@ try {
     (await page.goto(baseURL, { waitUntil: "networkidle" }))?.ok(),
     true,
   );
+  const runningMode = process.env.EXERCISE_MODE === "running";
+  if (runningMode) {
+    await page
+      .getByRole("button", { name: "原地踏步跑步", exact: true })
+      .click();
+  }
   await page.getByRole("button", { name: "使用攝影機", exact: true }).click();
   await page
     .locator('[data-player-status="1"][data-tracking="true"]')
@@ -189,6 +195,26 @@ try {
     result.videoTransform,
     "video and landmark overlay use matching mirroring",
   );
+  if (runningMode) {
+    const framesBefore = result.frames;
+    await page.locator(".start-button").click();
+    await page.waitForFunction(
+      (frames) => (window.__poseIntegration?.frames || 0) >= frames + 6,
+      framesBefore,
+      { timeout: 25000 },
+    );
+    assert.equal(
+      await page.locator('[data-player-status="1"]').getAttribute("data-steps"),
+      "0",
+      "a real stationary pose does not generate marching steps",
+    );
+    assert.equal(
+      await page.locator('.speed-reading [data-metric="speed"]').textContent(),
+      "0.0",
+      "the actual model cannot move a runner from stationary landmark noise",
+    );
+    await page.getByRole("button", { name: "暫停一下", exact: true }).click();
+  }
   await page.screenshot({
     path: join(artifacts, "camera-integration.png"),
     fullPage: true,
