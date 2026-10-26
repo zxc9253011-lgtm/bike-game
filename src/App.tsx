@@ -41,6 +41,11 @@ import RideScene from "./components/RideScene";
 import PoseCamera, { type PlayerAnalysis } from "./components/PoseCamera";
 import GameSetup from "./components/GameSetup";
 import RaceHud from "./components/RaceHud";
+import {
+  CognitiveRunSetup,
+  CognitiveRunHud,
+  CognitiveRunResults,
+} from "./components/CognitiveRun";
 import { assetUrl } from "./lib/assets";
 import { advanceRace, createRaceState } from "./lib/race";
 import {
@@ -49,6 +54,14 @@ import {
   usesSteps,
   type ExerciseMode,
 } from "./lib/exercise";
+import {
+  createCognitiveState,
+  advanceCognitiveState,
+  setCognitiveLane,
+  cognitiveSummary,
+  type CognitiveSummary,
+  type Lane,
+} from "./lib/cognitiveRun";
 
 type RouteId = "forest" | "coast" | "sunset";
 type Tracking = "demo" | "loading" | "tracking" | "positioning" | "error";
@@ -61,6 +74,7 @@ type RideRecord = {
   exerciseMode?: ExerciseMode;
   secondDistance?: number;
   winner?: 1 | 2 | "tie";
+  cognitive?: [CognitiveSummary, CognitiveSummary];
 };
 const routes: {
   id: RouteId;
@@ -136,6 +150,11 @@ export default function App() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [session, setSession] = useState(createRaceState);
   const [resetKey, setResetKey] = useState(0);
+  const [cognitiveEnabled, setCognitiveEnabled] = useState(true);
+  const [cognitive, setCognitive] = useState(createCognitiveState);
+  const [finishedCognitive, setFinishedCognitive] = useState<
+    [CognitiveSummary, CognitiveSummary] | null
+  >(null);
   const [players, setPlayers] = useState<[PlayerAnalysis, PlayerAnalysis]>([
     {
       cadence: 0,
@@ -193,6 +212,7 @@ export default function App() {
   const speed2 = exerciseSpeed(exerciseMode, cadence2);
   const stepping = usesSteps(exerciseMode);
   const runningMode = exerciseMode === "running";
+  const cognitiveActive = runningMode && cognitiveEnabled;
   const exerciseName = exerciseNames[exerciseMode];
   const raceTitle =
     session.result?.winner === "tie"
@@ -214,6 +234,70 @@ export default function App() {
   );
   const speedsRef = useRef<[number, number]>([speed, speed2]);
   speedsRef.current = [speed, speed2];
+
+  const onLaneChange = useCallback(
+    (player: 0 | 1, lane: Lane) => {
+      if (!cognitiveActive || modal || saved || player >= playerCount) return;
+      setCognitive((value) => setCognitiveLane(value, player, lane));
+    },
+    [cognitiveActive, modal, saved, playerCount],
+  );
+  const onSteer = useCallback(
+    (player: 0 | 1, direction: -1 | 1) => {
+      if (!cognitiveActive || modal || saved || player >= playerCount) return;
+      setCognitive((value) =>
+        setCognitiveLane(
+          value,
+          player,
+          Math.max(-1, Math.min(1, value[player].lane + direction)) as Lane,
+        ),
+      );
+    },
+    [cognitiveActive, modal, saved, playerCount],
+  );
+
+  useEffect(() => {
+    if (!cognitiveActive) return;
+    setCognitive((value) => advanceCognitiveState(value, session.distances));
+  }, [cognitiveActive, session.distances[0], session.distances[1]]);
+
+  useEffect(() => {
+    if (!cognitiveActive || !modal) return;
+    setRunning(false);
+    setCountdown(null);
+  }, [cognitiveActive, modal]);
+
+  useEffect(() => {
+    if (!cognitiveActive || modal || saved) return;
+    const key = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.altKey || event.metaKey || event.isComposing)
+        return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest(
+          "input, select, textarea, [contenteditable='true']",
+        )
+      )
+        return;
+      const letter = event.key.toLowerCase();
+      const first: Record<string, Lane> = { a: -1, s: 0, d: 1, arrowdown: 0 };
+      const second: Record<string, Lane> = { j: -1, k: 0, l: 1 };
+      const handled =
+        letter in first ||
+        (playerCount === 2 && letter in second) ||
+        letter === "arrowleft" ||
+        letter === "arrowright";
+      if (!handled) return;
+      event.preventDefault();
+      if (event.repeat) return;
+      if (letter === "arrowleft" || letter === "arrowright")
+        onSteer(0, letter === "arrowleft" ? -1 : 1);
+      else if (letter in first) onLaneChange(0, first[letter]);
+      else onLaneChange(1, second[letter]);
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [cognitiveActive, modal, saved, playerCount, onLaneChange, onSteer]);
 
   useEffect(() => {
     if (!running) return;
@@ -363,6 +447,14 @@ export default function App() {
     setRunning(false);
     setCountdown(null);
     if (elapsed > 0 && !saved) {
+      const finalGame = cognitiveActive
+        ? advanceCognitiveState(cognitive, session.distances)
+        : null;
+      const cognitiveResult = finalGame
+        ? cognitiveSummary(finalGame)
+        : undefined;
+      if (finalGame) setCognitive(finalGame);
+      setFinishedCognitive(cognitiveResult ?? null);
       const record = {
         date: new Date().toISOString(),
         seconds: Math.floor(elapsed),
@@ -372,6 +464,7 @@ export default function App() {
         exerciseMode,
         secondDistance: playerCount === 2 ? distance2 : undefined,
         winner: session.result?.winner,
+        cognitive: cognitiveResult,
       };
       const next = [record, ...records].slice(0, 100);
       setRecords(next);
@@ -388,6 +481,8 @@ export default function App() {
     setRunning(false);
     setCountdown(null);
     setSession(createRaceState());
+    setCognitive(createCognitiveState());
+    setFinishedCognitive(null);
     setResetKey((value) => value + 1);
     setCameraCadence(0);
     setSaved(false);
@@ -406,8 +501,16 @@ export default function App() {
       setToast("請先讓兩位玩家分別進入鏡頭左右區域。");
       return;
     }
+    // Keep the camera and the approaching objects visible when a taller game
+    // is started from a button below the fold. Off-screen preview video may
+    // otherwise be throttled by the browser while the user watches the footer.
+    if (cognitiveActive && !document.fullscreenElement && !theater) {
+      sceneRef.current?.scrollIntoView({ block: "start", behavior: "instant" });
+    }
     if (saved) {
       setSession(createRaceState());
+      setCognitive(createCognitiveState());
+      setFinishedCognitive(null);
       setResetKey((value) => value + 1);
       setSaved(false);
     }
@@ -566,8 +669,23 @@ export default function App() {
         <div className="dashboard-grid">
           <div className="main-column">
             <GameSetup {...setupProps} />
+            {runningMode && (
+              <CognitiveRunSetup
+                enabled={cognitiveEnabled}
+                locked={controlsLocked}
+                onEnabledChange={(value) => {
+                  if (value === cognitiveEnabled) return;
+                  changeSetup(
+                    () => setCognitiveEnabled(value),
+                    value
+                      ? "已開啟專注小遊戲：收目標金幣，換道避開炸彈。"
+                      : "已切換輕鬆跑步。",
+                  );
+                }}
+              />
+            )}
             <section
-              className={`ride-card route-${route}${playerCount === 2 ? " is-duel" : ""}${theater ? " expanded-view" : ""}`}
+              className={`ride-card route-${route}${playerCount === 2 ? " is-duel" : ""}${cognitiveActive ? " has-cognitive-game" : ""}${theater ? " expanded-view" : ""}`}
               ref={sceneRef}
               aria-label="3D 騎行遊戲"
               data-fullscreen={isFullscreen || theater}
@@ -581,6 +699,7 @@ export default function App() {
                 playerDistances={session.distances}
                 analysisActive={mode === "camera"}
                 exerciseMode={exerciseMode}
+                cognitiveGame={{ enabled: cognitiveActive, players: cognitive }}
               />
               <div className="scene-fullscreen-setup">
                 <GameSetup {...setupProps} compact />
@@ -675,6 +794,8 @@ export default function App() {
                     onCadence={onCadence}
                     onTracking={onTracking}
                     onPlayers={onPlayers}
+                    steeringEnabled={cognitiveActive && !modal && !saved}
+                    onSteer={onSteer}
                   />
                 </div>
                 <div className="scene-camera-summary" role="status">
@@ -693,6 +814,15 @@ export default function App() {
                               : "請讓肩膀、膝蓋和雙腳完整入鏡"}
                 </div>
               </aside>
+              {cognitiveActive && (
+                <CognitiveRunHud
+                  state={cognitive}
+                  playerCount={playerCount}
+                  onLaneChange={onLaneChange}
+                  active={running}
+                  controlsEnabled={!modal && !saved}
+                />
+              )}
               {playerCount === 2 && (
                 <RaceHud
                   speeds={[speed, speed2]}
@@ -1295,6 +1425,15 @@ export default function App() {
                         </p>
                       </div>
                     </li>
+                    <li>
+                      <span>04</span>
+                      <div>
+                        <h3>收目標金幣，換道避開炸彈</h3>
+                        <p>
+                          跑步模式可開啟專注小遊戲，每四排更換星星／葉子目標。人留在原地踏步，先放下雙手，再抬左／右手換道；也能按選道按鈕或使用方向鍵。停下來想一想也可以。碰到炸彈只會給提醒，旅程仍可繼續。
+                        </p>
+                      </div>
+                    </li>
                   </ol>
                   <div className="guide-note">
                     <ShieldCheck size={19} />
@@ -1389,6 +1528,25 @@ export default function App() {
                                     : ""}
                                 </span>
                               )}
+                              {Array.isArray(item.cognitive) &&
+                                item.cognitive
+                                  .slice(0, item.playerCount === 2 ? 2 : 1)
+                                  .map(
+                                    (result, player) =>
+                                      result &&
+                                      Number.isFinite(result.score) && (
+                                        <span
+                                          key={player}
+                                          className="record-cognitive"
+                                        >
+                                          {item.playerCount === 2
+                                            ? `玩家 ${player + 1} `
+                                            : ""}
+                                          專注遊戲：金幣 {result.coins} · 避彈{" "}
+                                          {result.avoided} · {result.score} 分
+                                        </span>
+                                      ),
+                                  )}
                             </div>
                           </div>
                         ))}
@@ -1472,6 +1630,12 @@ export default function App() {
                         ? "跑步距離為依踏步節奏推估的遊戲里程。"
                         : "騎行距離為依踩踏節奏推估的遊戲里程。"}
                   </p>
+                  {finishedCognitive && (
+                    <CognitiveRunResults
+                      summaries={finishedCognitive}
+                      playerCount={playerCount}
+                    />
+                  )}
                   <button className="primary-button" onClick={resetRide}>
                     <RotateCcw size={17} />
                     開始一段新旅程

@@ -1,0 +1,720 @@
+.cognitive-setup {
+  margin: 0 0 16px;
+  padding: 15px 20px;
+  border: 1px solid #e3e9da;
+  border-radius: 15px;
+  color: #496344;
+  background: #fbfcf7;
+}
+.cognitive-setup-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cognitive-setup-icon {
+  display: grid;
+  place-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: #eaf0de;
+  color: #839a66;
+}
+.cognitive-setup-heading h2 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.cognitive-setup-heading p {
+  margin: 0;
+  font-size: 11px;
+  color: #89967c;
+}
+.cognitive-switch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 7px 9px;
+  border-radius: 8px;
+  color: #65795b;
+  background: #edf2e4;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.cognitive-switch > span {
+  width: 24px;
+  height: 14px;
+  padding: 2px;
+  border-radius: 10px;
+  background: #bec8b5;
+}
+.cognitive-switch > span::after {
+  content: "";
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: white;
+}
+.cognitive-switch[aria-checked="true"] > span {
+  background: #719658;
+}
+.cognitive-switch[aria-checked="true"] > span::after {
+  margin-left: 10px;
+}
+.cognitive-switch:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.cognitive-setup-details {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid #e9eedf;
+  font-size: 11px;
+  line-height: 1.8;
+  color: #718165;
+}
+.cognitive-setup-details p {
+  margin: 6px 0;
+}
+.cognitive-rule-icons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+  color: #526c46;
+  font-weight: 600;
+}
+.cognitive-rule-icons > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.cognitive-coin-mark {
+  display: inline-grid;
+  place-content: center;
+  flex-shrink: 0;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  border: 1px solid #d7ba64;
+  background: #fff1b9;
+  color: #9c7923;
+}
+.cognitive-coin-mark.is-star svg {
+  fill: #e7c768;
+}
+.cognitive-coin-mark.is-leaf {
+  border-color: #91b8c9;
+  color: #3a7e96;
+  background: #e2f3f7;
+}
+.cognitive-coin-mark.is-leaf svg {
+  fill: #afdae5;
+}
+.cognitive-bomb-label {
+  color: #7a6e61;
+}
+.cognitive-control-help {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+.cognitive-control-help svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.cognitive-key-help,
+.cognitive-setup-details small {
+  color: #909a84;
+  font-size: 10px;
+}
+.ride-card.has-cognitive-game:not(:fullscreen):not(.expanded-view) {
+  height: 720px;
+}
+.ride-card.has-cognitive-game.is-duel:not(:fullscreen):not(.expanded-view) {
+  height: 800px;
+}
+.ride-card.has-cognitive-game .scene-status {
+  display: none;
+}
+.ride-card.has-cognitive-game .scene-tools {
+  flex-direction: row;
+  align-items: center;
+}
+.ride-card.has-cognitive-game .end-ride {
+  position: static;
+  flex-shrink: 0;
+}
+.cognitive-hud {
+  --cognitive-player: #658650;
+}
+.cognitive-hud .player-2,
+.cognitive-result-card.player-2 {
+  --cognitive-player: #5285a0;
+}
+.cognitive-targets {
+  position: absolute;
+  z-index: 5;
+  top: 132px;
+  left: 24px;
+  width: min(248px, calc(100% - 300px));
+  color: #496542;
+}
+.cognitive-targets-heading,
+.cognitive-targets-heading > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.cognitive-targets-heading {
+  justify-content: space-between;
+  margin: 0 0 6px;
+  font-size: 9px;
+  font-weight: 600;
+}
+.cognitive-targets-heading > span:last-child {
+  font-size: 8px;
+  color: #7b7c62;
+}
+.cognitive-target-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.cognitive-player-card {
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid #ffffffe6;
+  border-radius: 12px;
+  background: #fffef6ed;
+  box-shadow: 0 4px 18px #253e2212;
+  backdrop-filter: blur(12px);
+}
+.cognitive-player-heading,
+.cognitive-player-heading > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.cognitive-player-heading {
+  justify-content: space-between;
+  font-size: 9px;
+  color: #7b8c6c;
+}
+.cognitive-player-heading > span:first-child {
+  color: var(--cognitive-player);
+  font-weight: 700;
+}
+.cognitive-player-heading i,
+.cognitive-lane-heading i,
+.cognitive-result-player i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cognitive-player, #658650);
+}
+.cognitive-current-target {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 7px 0;
+}
+.cognitive-current-target strong {
+  color: #4c6642;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.cognitive-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+.cognitive-stats > span {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #55724a;
+}
+.cognitive-stats strong {
+  font:
+    700 15px Arial,
+    sans-serif;
+}
+.cognitive-stats small {
+  font-size: 8px;
+  color: #8e997f;
+  white-space: nowrap;
+}
+.cognitive-accuracy {
+  margin-top: 5px;
+  font-size: 8px;
+  color: #8b987c;
+}
+.cognitive-feedback {
+  margin: 5px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #6c8256;
+  font-size: 9px;
+  line-height: 1.5;
+}
+.cognitive-feedback.is-bomb,
+.cognitive-feedback.is-wrong-coin {
+  color: #9a7e4c;
+}
+.cognitive-hud.is-dual .cognitive-targets {
+  width: min(540px, calc(100% - 300px));
+}
+.cognitive-hud.is-dual .cognitive-target-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.ride-card.has-cognitive-game.is-duel .race-hud {
+  top: 310px;
+}
+.cognitive-controls {
+  position: absolute;
+  z-index: 6;
+  bottom: 86px;
+  left: 50%;
+  width: min(440px, calc(100% - 48px));
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 9px;
+}
+.cognitive-hud.is-dual .cognitive-controls {
+  width: min(650px, calc(100% - 48px));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.cognitive-lane-panel {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #ffffffb8;
+  border-radius: 12px;
+  background: #fbfcf3f2;
+  box-shadow: 0 3px 18px #243e2420;
+  backdrop-filter: blur(12px);
+}
+.cognitive-lane-heading,
+.cognitive-lane-heading strong {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.cognitive-lane-heading {
+  justify-content: space-between;
+  margin-bottom: 5px;
+  color: var(--cognitive-player);
+}
+.cognitive-lane-heading strong {
+  font-size: 10px;
+}
+.cognitive-lane-heading > span {
+  font:
+    9px Arial,
+    sans-serif;
+  color: #929b83;
+}
+.cognitive-lane-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+.cognitive-lane-buttons button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 7px;
+  border: 1px solid #e2e8d9;
+  border-radius: 8px;
+  color: #6b7f5c;
+  background: #f2f5eb;
+  font-size: 13px;
+  font-weight: 600;
+}
+.cognitive-lane-buttons button[aria-pressed="true"] {
+  border-color: var(--cognitive-player);
+  color: var(--cognitive-player);
+  background: #eaf1df;
+  box-shadow: inset 0 0 0 1px var(--cognitive-player);
+}
+.cognitive-lane-panel.player-2 button[aria-pressed="true"] {
+  background: #e9f1f4;
+}
+.cognitive-lane-buttons button:hover {
+  border-color: var(--cognitive-player);
+}
+.cognitive-lane-buttons button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.cognitive-lane-buttons button:focus-visible,
+.cognitive-switch:focus-visible {
+  outline: 3px solid #a3bb78;
+  outline-offset: 2px;
+}
+.cognitive-center-dot {
+  width: 7px;
+  height: 7px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+}
+.ride-card.has-cognitive-game .race-positioning-note {
+  bottom: 174px;
+}
+.ride-card.has-cognitive-game .race-result-inline {
+  bottom: 174px;
+}
+.ride-card.has-cognitive-game:fullscreen .cognitive-targets,
+.ride-card.has-cognitive-game.expanded-view .cognitive-targets {
+  top: 142px;
+  left: 28px;
+}
+.ride-card.has-cognitive-game:fullscreen .cognitive-controls,
+.ride-card.has-cognitive-game.expanded-view .cognitive-controls {
+  bottom: 110px;
+}
+.ride-card.has-cognitive-game:fullscreen .cognitive-player-card,
+.ride-card.has-cognitive-game.expanded-view .cognitive-player-card {
+  padding: 12px 14px;
+}
+.ride-card.has-cognitive-game:fullscreen .cognitive-current-target strong,
+.ride-card.has-cognitive-game.expanded-view .cognitive-current-target strong {
+  font-size: 16px;
+}
+.ride-card.has-cognitive-game:fullscreen .cognitive-lane-buttons button,
+.ride-card.has-cognitive-game.expanded-view .cognitive-lane-buttons button {
+  min-height: 46px;
+  font-size: 15px;
+}
+.cognitive-results {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid #e4e9dc;
+  border-radius: 13px;
+  background: #f3f6eb;
+  color: #526b46;
+}
+.cognitive-results h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 13px;
+  font-size: 14px;
+}
+.cognitive-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 13px;
+}
+.cognitive-result-card {
+  min-width: 0;
+}
+.cognitive-result-player {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+.cognitive-result-player > span {
+  margin-left: auto;
+  color: var(--cognitive-player, #658650);
+  font-size: 15px;
+}
+.cognitive-result-card dl {
+  margin: 9px 0 0;
+  font-size: 10px;
+}
+.cognitive-result-card dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 7px 0;
+}
+.cognitive-result-card dt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #8b987f;
+}
+.cognitive-result-card dd {
+  margin: 0;
+  font-weight: 600;
+}
+.cognitive-results > p {
+  margin: 13px 0 0;
+  font-size: 10px;
+  color: #8b987e;
+  line-height: 1.7;
+}
+.large-text .cognitive-current-target strong {
+  font-size: 16px;
+  white-space: normal;
+}
+.large-text .cognitive-lane-buttons button {
+  min-height: 48px;
+  font-size: 16px;
+}
+.large-text .cognitive-stats small,
+.large-text .cognitive-accuracy {
+  font-size: 11px;
+}
+.large-text .cognitive-feedback {
+  font-size: 12px;
+}
+@media (max-width: 1100px) {
+  .cognitive-targets {
+    left: 18px;
+    width: min(240px, calc(100% - 255px));
+  }
+  .cognitive-hud.is-dual .cognitive-targets {
+    width: calc(100% - 255px);
+  }
+  .cognitive-player-card {
+    padding: 8px;
+  }
+  .cognitive-current-target {
+    gap: 4px;
+  }
+  .cognitive-current-target strong {
+    font-size: 11px;
+  }
+  .cognitive-stats strong {
+    font-size: 13px;
+  }
+}
+@media (max-width: 760px) {
+  .ride-card.has-cognitive-game .scene-bottom {
+    gap: 8px;
+  }
+  .ride-card.has-cognitive-game .ride-metrics {
+    min-width: 0;
+    gap: 8px;
+  }
+  .ride-card.has-cognitive-game .ride-metrics strong {
+    font-size: clamp(18px, 5vw, 24px);
+  }
+  .cognitive-setup {
+    padding: 13px 14px;
+  }
+  .cognitive-setup-heading h2 {
+    font-size: 12px;
+  }
+  .cognitive-setup-heading p {
+    font-size: 10px;
+  }
+  .cognitive-setup-icon {
+    width: 32px;
+    height: 32px;
+  }
+  .cognitive-rule-icons {
+    gap: 9px 14px;
+  }
+  .cognitive-setup-details {
+    font-size: 10px;
+  }
+  .cognitive-switch {
+    padding: 6px;
+    gap: 4px;
+    font-size: 10px;
+  }
+  .ride-card.has-cognitive-game:not(:fullscreen):not(.expanded-view) {
+    height: 740px;
+  }
+  .ride-card.has-cognitive-game.is-duel:not(:fullscreen):not(.expanded-view) {
+    height: 850px;
+  }
+  .cognitive-targets,
+  .cognitive-hud.is-dual .cognitive-targets {
+    top: 286px;
+    left: 14px;
+    width: calc(100% - 28px);
+  }
+  .cognitive-hud:not(.is-dual) .cognitive-target-grid {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 250px;
+  }
+  .cognitive-hud:not(.is-dual) .cognitive-targets {
+    top: 132px;
+    width: calc(100% - 190px);
+  }
+  .cognitive-player-card {
+    padding: 8px 10px;
+  }
+  .cognitive-current-target {
+    margin: 5px 0;
+  }
+  .cognitive-current-target strong {
+    font-size: 12px;
+  }
+  .cognitive-stats strong {
+    font-size: 13px;
+  }
+  .cognitive-stats small {
+    font-size: 7px;
+  }
+  .cognitive-feedback {
+    font-size: 8px;
+  }
+  .ride-card.has-cognitive-game.is-duel .race-hud {
+    top: 126px;
+  }
+  .cognitive-controls,
+  .cognitive-hud.is-dual .cognitive-controls {
+    bottom: 86px;
+    width: calc(100% - 28px);
+    gap: 7px;
+  }
+  .cognitive-lane-panel {
+    padding: 7px 6px;
+  }
+  .cognitive-lane-buttons {
+    gap: 4px;
+  }
+  .cognitive-lane-buttons button {
+    min-height: 42px;
+    padding: 6px 3px;
+    gap: 3px;
+    font-size: 12px;
+  }
+  .cognitive-lane-buttons button svg {
+    width: 14px;
+  }
+  .cognitive-lane-heading strong {
+    font-size: 9px;
+  }
+  .cognitive-lane-heading > span {
+    font-size: 8px;
+  }
+  .ride-card.has-cognitive-game:fullscreen .cognitive-targets,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-targets {
+    top: 334px;
+    left: 14px;
+    width: calc(100% - 28px);
+  }
+  .ride-card.has-cognitive-game:fullscreen .cognitive-player-card,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-player-card {
+    padding: 8px 10px;
+  }
+  .ride-card.has-cognitive-game:fullscreen
+    .cognitive-hud:not(.is-dual)
+    .cognitive-targets,
+  .ride-card.has-cognitive-game.expanded-view
+    .cognitive-hud:not(.is-dual)
+    .cognitive-targets {
+    top: 142px;
+    width: calc(100% - 240px);
+  }
+  .ride-card.has-cognitive-game:fullscreen
+    .cognitive-hud.is-dual
+    .cognitive-accuracy,
+  .ride-card.has-cognitive-game.expanded-view
+    .cognitive-hud.is-dual
+    .cognitive-accuracy,
+  .ride-card.has-cognitive-game:fullscreen
+    .cognitive-hud.is-dual
+    .cognitive-feedback,
+  .ride-card.has-cognitive-game.expanded-view
+    .cognitive-hud.is-dual
+    .cognitive-feedback {
+    display: none;
+  }
+  .ride-card.has-cognitive-game:fullscreen .cognitive-current-target strong,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-current-target strong {
+    font-size: 12px;
+  }
+  .ride-card.has-cognitive-game:fullscreen.is-duel .race-hud,
+  .ride-card.has-cognitive-game.expanded-view.is-duel .race-hud {
+    top: 150px;
+    left: 14px;
+    width: calc(100% - 240px);
+  }
+  .ride-card.has-cognitive-game:fullscreen.is-duel .race-player-grid,
+  .ride-card.has-cognitive-game.expanded-view.is-duel .race-player-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ride-card.has-cognitive-game:fullscreen .cognitive-controls,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-controls {
+    bottom: 106px;
+  }
+  .ride-card.has-cognitive-game:fullscreen:has(.cognitive-hud.is-active)
+    .scene-fullscreen-setup,
+  .ride-card.has-cognitive-game.expanded-view:has(.cognitive-hud.is-active)
+    .scene-fullscreen-setup {
+    display: none;
+  }
+  .ride-card.has-cognitive-game:fullscreen:has(.cognitive-hud:not(.is-active))
+    .cognitive-controls,
+  .ride-card.has-cognitive-game.expanded-view:has(
+      .cognitive-hud:not(.is-active)
+    )
+    .cognitive-controls {
+    bottom: 220px;
+  }
+  .ride-card.has-cognitive-game.is-duel:fullscreen:has(
+      .cognitive-hud:not(.is-active)
+    )
+    .cognitive-controls,
+  .ride-card.has-cognitive-game.is-duel.expanded-view:has(
+      .cognitive-hud:not(.is-active)
+    )
+    .cognitive-controls {
+    bottom: 280px;
+  }
+  .cognitive-results {
+    padding: 13px;
+  }
+}
+@media (max-height: 550px) and (min-width: 600px) {
+  .ride-card.has-cognitive-game:fullscreen .cognitive-targets,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-targets {
+    top: 86px;
+    left: 20px;
+    width: min(430px, calc(100% - 255px));
+  }
+  .ride-card.has-cognitive-game:fullscreen .cognitive-player-card,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-player-card {
+    padding: 6px 8px;
+  }
+  .ride-card.has-cognitive-game:fullscreen .cognitive-current-target,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-current-target {
+    margin: 3px 0;
+  }
+  .ride-card.has-cognitive-game:fullscreen .cognitive-current-target strong,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-current-target strong {
+    font-size: 11px;
+  }
+  .ride-card.has-cognitive-game:fullscreen .cognitive-coin-mark,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-coin-mark {
+    width: 22px;
+    height: 22px;
+  }
+  .ride-card.has-cognitive-game:fullscreen .cognitive-feedback,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-feedback,
+  .ride-card.has-cognitive-game:fullscreen .cognitive-accuracy,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-accuracy {
+    display: none;
+  }
+  .ride-card.has-cognitive-game:fullscreen.is-duel .race-hud,
+  .ride-card.has-cognitive-game.expanded-view.is-duel .race-hud {
+    top: 216px;
+  }
+  .ride-card.has-cognitive-game:fullscreen .cognitive-controls,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-controls {
+    bottom: 82px;
+  }
+  .ride-card.has-cognitive-game:fullscreen .cognitive-lane-buttons button,
+  .ride-card.has-cognitive-game.expanded-view .cognitive-lane-buttons button {
+    min-height: 35px;
+    font-size: 12px;
+  }
+}

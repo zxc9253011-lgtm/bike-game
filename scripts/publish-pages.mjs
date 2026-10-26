@@ -92,13 +92,13 @@ try {
     "main",
     sourceFiles,
     root,
-    "Add gentle marching running mode for older adults",
+    "Add coin collection, bomb avoidance and attention practice",
   );
   await publish(
     "gh-pages",
     await filesUnder(join(root, "dist-pages")),
     join(root, "dist-pages"),
-    "Publish gentle marching and 3D running mode",
+    "Publish running cognitive mini-game",
   );
   console.log(
     `Website files uploaded. GitHub Pages deploys the gh-pages branch automatically.\nWebsite: ${website}`,

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { CadenceEstimator } from "../lib/cadence";
 import { HighKneeEstimator } from "../lib/highKnee";
 import { MarchingEstimator } from "../lib/marching";
+import { SteeringEstimator, type SteeringDirection } from "../lib/steering";
 import type { ExerciseMode } from "../lib/exercise";
 import { assetUrl } from "../lib/assets";
 import { PoseFreshness, PoseTimeoutError, poseDeadline } from "../lib/tracking";
@@ -60,6 +61,8 @@ export type PoseCameraProps = {
   demoCadence2?: number;
   onPlayers?: (players: [PlayerAnalysis, PlayerAnalysis]) => void;
   resetKey?: number;
+  onSteer?: (playerIndex: 0 | 1, direction: SteeringDirection) => void;
+  steeringEnabled?: boolean;
 };
 
 let localPoseScript: Promise<PoseConstructor> | null = null;
@@ -176,14 +179,17 @@ export default function PoseCamera({
   demoCadence2 = demoCadence,
   onPlayers,
   resetKey = 0,
+  onSteer,
+  steeringEnabled = false,
 }: PoseCameraProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const callbacks = useRef({ onCadence, onTracking, onPlayers });
-  const live = useRef({ running, exerciseMode });
+  const callbacks = useRef({ onCadence, onTracking, onPlayers, onSteer });
+  const live = useRef({ running, exerciseMode, steeringEnabled });
   const seated = useRef([new CadenceEstimator(), new CadenceEstimator()]);
   const standing = useRef([new HighKneeEstimator(), new HighKneeEstimator()]);
   const marching = useRef([new MarchingEstimator(), new MarchingEstimator()]);
+  const steering = useRef([new SteeringEstimator(), new SteeringEstimator()]);
   const analyses = useRef<[PlayerAnalysis, PlayerAnalysis]>([
     blankPlayer(positioningFeedback(exerciseMode)),
     blankPlayer(positioningFeedback(exerciseMode)),
@@ -200,8 +206,12 @@ export default function PoseCamera({
   );
   const [errorMessage, setErrorMessage] = useState("");
   const [retry, setRetry] = useState(0);
-  callbacks.current = { onCadence, onTracking, onPlayers };
-  live.current = { running, exerciseMode };
+  callbacks.current = { onCadence, onTracking, onPlayers, onSteer };
+  live.current = { running, exerciseMode, steeringEnabled };
+
+  useEffect(() => {
+    for (const estimator of steering.current) estimator.reset();
+  }, [steeringEnabled, running, exerciseMode, resetKey]);
 
   useEffect(() => {
     if (!running) pauseAnalysis.current();
@@ -250,6 +260,7 @@ export default function PoseCamera({
     for (const estimator of seated.current) estimator.reset();
     for (const estimator of standing.current) estimator.suspend();
     for (const estimator of marching.current) estimator.suspend();
+    for (const estimator of steering.current) estimator.reset();
     analyses.current = [
       {
         ...blankPlayer(positioningFeedback(live.current.exerciseMode)),
@@ -305,6 +316,7 @@ export default function PoseCamera({
       for (const estimator of seated.current) estimator.reset();
       for (const estimator of standing.current) estimator.suspend();
       for (const estimator of marching.current) estimator.suspend();
+      for (const estimator of steering.current) estimator.reset();
       analyses.current = analyses.current.map((player) => ({
         ...player,
         cadence: 0,
@@ -317,6 +329,7 @@ export default function PoseCamera({
       for (const estimator of seated.current) estimator.reset();
       for (const estimator of standing.current) estimator.reset();
       for (const estimator of marching.current) estimator.reset();
+      for (const estimator of steering.current) estimator.reset();
       highKneeTotals.current = [0, 0];
       marchingTotals.current = [0, 0];
       analyses.current = analyses.current.map((player) => ({
@@ -344,6 +357,7 @@ export default function PoseCamera({
       seated.current[session.index].reset();
       standing.current[session.index].suspend();
       marching.current[session.index].suspend();
+      steering.current[session.index].reset();
       if (clearPoints) session.points = undefined;
       analyses.current[session.index] = {
         ...analyses.current[session.index],
@@ -482,6 +496,7 @@ export default function PoseCamera({
         live.current.exerciseMode,
       );
       if (!motion || !points) {
+        steering.current[session.index].reset();
         const keep = session.health.keepMotion(now);
         if (!keep)
           suspendMotion(
@@ -503,6 +518,18 @@ export default function PoseCamera({
             : positioningFeedback(live.current.exerciseMode),
         };
       } else {
+        if (
+          live.current.running &&
+          live.current.exerciseMode === "running" &&
+          live.current.steeringEnabled
+        ) {
+          const direction = steering.current[session.index].update(
+            points,
+            session.capturedAt,
+          );
+          if (direction !== null)
+            callbacks.current.onSteer?.(session.index, direction);
+        } else steering.current[session.index].reset();
         session.health.valid();
         session.points = points;
         session.held = false;
@@ -792,6 +819,7 @@ export default function PoseCamera({
                 // Keep the last skeleton dimmed while the deadline recovers
                 // the graph; ordinary slow, live results have a larger budget.
                 session.held = true;
+                steering.current[session.index].reset();
                 analyses.current[session.index] = {
                   ...analyses.current[session.index],
                   cadence: 0,
@@ -840,6 +868,7 @@ export default function PoseCamera({
       for (const estimator of seated.current) estimator.reset();
       for (const estimator of standing.current) estimator.suspend();
       for (const estimator of marching.current) estimator.suspend();
+      for (const estimator of steering.current) estimator.reset();
     };
   }, [mode, playerCount, retry]);
 

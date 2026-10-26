@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { ExerciseMode } from "../lib/exercise";
+import { cognitiveRow, type CognitiveState } from "../lib/cognitiveRun";
 
 type Route = "forest" | "coast" | "sunset";
 type Props = {
@@ -12,6 +13,7 @@ type Props = {
   playerDistances?: [number, number];
   analysisActive?: boolean;
   exerciseMode?: ExerciseMode;
+  cognitiveGame?: { enabled: boolean; players: CognitiveState };
 };
 type Vec = [number, number, number];
 
@@ -67,6 +69,7 @@ export default function RideScene({
   playerDistances,
   analysisActive = false,
   exerciseMode = "seated",
+  cognitiveGame,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const motionRef = useRef({
@@ -77,6 +80,7 @@ export default function RideScene({
     playerDistances,
     analysisActive,
     exerciseMode,
+    cognitiveGame,
   });
   const routeRef = useRef(route);
   const changeRouteRef = useRef<((next: Route) => void) | null>(null);
@@ -93,6 +97,7 @@ export default function RideScene({
       playerDistances,
       analysisActive,
       exerciseMode,
+      cognitiveGame,
     };
   }, [
     speed,
@@ -102,6 +107,7 @@ export default function RideScene({
     playerDistances,
     analysisActive,
     exerciseMode,
+    cognitiveGame,
   ]);
   useEffect(() => {
     changePlayersRef.current?.(playerCount);
@@ -914,6 +920,125 @@ export default function RideScene({
       return { runner, body, legs, arms, phase: 0, traveled: 0 };
     }
     const runners = [createRunner(1), createRunner(2)];
+
+    // Fixed-size item pools share their geometry and never create meshes in
+    // the animation loop. Shapes remain readable without flashing effects.
+    const coinBodyGeometry = new THREE.CylinderGeometry(0.43, 0.43, 0.12, 20);
+    const starShape = new THREE.Shape();
+    for (let point = 0; point < 10; point++) {
+      const angle = Math.PI / 2 + (point * Math.PI) / 5;
+      const radius = point % 2 === 0 ? 0.275 : 0.12;
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+      if (point === 0) starShape.moveTo(x, y);
+      else starShape.lineTo(x, y);
+    }
+    starShape.closePath();
+    const leafShape = new THREE.Shape();
+    leafShape.moveTo(-0.04, -0.28);
+    leafShape.bezierCurveTo(-0.29, -0.06, -0.23, 0.2, 0.17, 0.29);
+    leafShape.bezierCurveTo(0.27, 0.08, 0.23, -0.16, -0.04, -0.28);
+    const crossShape = new THREE.Shape();
+    const crossPoints = [
+      [-0.18, -0.1],
+      [-0.1, -0.18],
+      [0, -0.08],
+      [0.1, -0.18],
+      [0.18, -0.1],
+      [0.08, 0],
+      [0.18, 0.1],
+      [0.1, 0.18],
+      [0, 0.08],
+      [-0.1, 0.18],
+      [-0.18, 0.1],
+      [-0.08, 0],
+    ];
+    crossPoints.forEach(([x, y], index) => {
+      if (index === 0) crossShape.moveTo(x, y);
+      else crossShape.lineTo(x, y);
+    });
+    crossShape.closePath();
+    const starGeometry = new THREE.ShapeGeometry(starShape);
+    const leafGeometry = new THREE.ShapeGeometry(leafShape);
+    const crossGeometry = new THREE.ShapeGeometry(crossShape);
+    const bombGeometry = new THREE.SphereGeometry(0.37, 16, 12);
+    const fuseGeometry = new THREE.TubeGeometry(
+      new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0, 0.34, 0),
+        new THREE.Vector3(0.035, 0.48, 0),
+        new THREE.Vector3(0.16, 0.56, 0.02),
+        new THREE.Vector3(0.22, 0.5, 0.03),
+      ]),
+      10,
+      0.028,
+      6,
+      false,
+    );
+    const tipGeometry = new THREE.SphereGeometry(0.047, 8, 6);
+    const coinGold = new THREE.MeshStandardMaterial({
+      color: "#efbd42",
+      roughness: 0.38,
+      metalness: 0.35,
+      emissive: "#a57517",
+      emissiveIntensity: 0.18,
+    });
+    const coinBlue = new THREE.MeshStandardMaterial({
+      color: "#55a5d6",
+      roughness: 0.4,
+      metalness: 0.2,
+      emissive: "#1d5f85",
+      emissiveIntensity: 0.18,
+    });
+    const coinMark = new THREE.MeshBasicMaterial({
+      color: "#fff8d7",
+      side: THREE.DoubleSide,
+    });
+    const bombMaterial = mat("#526475", 0.83);
+    const fuseMaterial = mat("#d3b88a");
+    const tipMaterial = new THREE.MeshBasicMaterial({ color: "#e3b86c" });
+    const cognitiveMaterials = [
+      coinGold,
+      coinBlue,
+      coinMark,
+      bombMaterial,
+      fuseMaterial,
+      tipMaterial,
+    ];
+    const cognitiveRoot = new THREE.Group();
+    cognitiveRoot.name = "Running-Cognitive-Items";
+    cognitiveRoot.visible = false;
+    scene.add(cognitiveRoot);
+    function createCognitiveItem() {
+      const root = new THREE.Group();
+      const coin = new THREE.Group();
+      const body = new THREE.Mesh(coinBodyGeometry, coinGold);
+      body.rotation.x = Math.PI / 2;
+      coin.add(body);
+      const star = new THREE.Mesh(starGeometry, coinMark);
+      const leaf = new THREE.Mesh(leafGeometry, coinMark);
+      star.position.z = leaf.position.z = 0.064;
+      coin.add(star, leaf);
+      const bomb = new THREE.Group();
+      bomb.add(new THREE.Mesh(bombGeometry, bombMaterial));
+      bomb.add(new THREE.Mesh(fuseGeometry, fuseMaterial));
+      const tip = new THREE.Mesh(tipGeometry, tipMaterial);
+      tip.position.set(0.22, 0.5, 0.03);
+      bomb.add(tip);
+      const cross = new THREE.Mesh(crossGeometry, coinMark);
+      cross.position.z = 0.373;
+      bomb.add(cross);
+      root.add(coin, bomb);
+      cognitiveRoot.add(root);
+      return { root, coin, body, star, leaf, bomb };
+    }
+    const cognitivePools = Array.from({ length: 2 }, () =>
+      Array.from({ length: 2 }, () => ({
+        index: -1,
+        row: cognitiveRow(0, 0),
+        items: Array.from({ length: 3 }, createCognitiveItem),
+      })),
+    );
+    let itemPhase = 0;
     function moveTube(
       mesh: THREE.Mesh,
       a: THREE.Vector3,
@@ -1201,8 +1326,20 @@ export default function RideScene({
         opponentSpeed,
         playerDistances,
         exerciseMode,
+        cognitiveGame,
       } = motionRef.current;
       const duel = playerCount === 2;
+      const cognitiveEnabled =
+        exerciseMode === "running" && !!cognitiveGame?.enabled;
+      const cognitiveFlag = String(cognitiveEnabled);
+      if (renderer.domElement.dataset.cognitiveGame !== cognitiveFlag)
+        renderer.domElement.dataset.cognitiveGame = cognitiveFlag;
+      const laneData =
+        cognitiveEnabled && cognitiveGame
+          ? cognitiveGame.players.map((player) => player.lane).join(",")
+          : "0,0";
+      if (renderer.domElement.dataset.lanes !== laneData)
+        renderer.domElement.dataset.lanes = laneData;
       const velocities = [currentSpeed, opponentSpeed].map((value) =>
         isRunning && Number.isFinite(value) ? Math.max(0, value) / 3.6 : 0,
       );
@@ -1260,8 +1397,71 @@ export default function RideScene({
           player.cyclist.position.z = z;
           player.cyclist.position.x = curve(z) + (index === 0 ? -1.1 : 1.1);
           runners[index].runner.position.z = z;
-          runners[index].runner.position.x = player.cyclist.position.x;
+          if (!cognitiveEnabled)
+            runners[index].runner.position.x = player.cyclist.position.x;
         });
+      }
+
+      cognitiveRoot.visible = cognitiveEnabled;
+      if (cognitiveEnabled && cognitiveGame) {
+        if (isRunning && velocities.some((value) => value > 0)) itemPhase += dt;
+        for (const playerIndex of [0, 1] as const) {
+          const present = playerIndex === 0 || duel;
+          const player = cognitiveGame.players[playerIndex];
+          const runner = runners[playerIndex].runner;
+          const z = runner.position.z;
+          const base = duel ? (playerIndex === 0 ? -1.2 : 1.2) : 0;
+          const laneWidth = duel ? 0.65 : 1.4;
+          const targetX = curve(z) + base + player.lane * laneWidth;
+          const difference = targetX - runner.position.x;
+          runner.position.x =
+            Math.abs(difference) < 0.01
+              ? targetX
+              : runner.position.x + difference * (1 - Math.exp(-dt * 12));
+          const distanceValue =
+            playerDistances?.[playerIndex] ?? player.distance;
+          const distance = Number.isFinite(distanceValue)
+            ? Math.max(0, distanceValue)
+            : 0;
+          cognitivePools[playerIndex].forEach((pool, offset) => {
+            const rowIndex = player.nextRow + offset;
+            if (pool.index !== rowIndex) {
+              pool.index = rowIndex;
+              pool.row = cognitiveRow(rowIndex, playerIndex);
+              pool.row.items.forEach((item, index) => {
+                const visual = pool.items[index];
+                const isBomb = item.kind === "bomb";
+                visual.coin.visible = !isBomb;
+                visual.bomb.visible = isBomb;
+                visual.star.visible = item.kind === "star";
+                visual.leaf.visible = item.kind === "leaf";
+                visual.body.material =
+                  item.kind === "leaf" ? coinBlue : coinGold;
+                visual.root.name = `P${playerIndex + 1}-Row${rowIndex}-${item.kind}-${item.lane}`;
+              });
+            }
+            const remaining = pool.row.distance - distance;
+            pool.row.items.forEach((item, index) => {
+              const visual = pool.items[index];
+              visual.root.visible = present && remaining >= -0.1;
+              const itemZ = z - remaining;
+              const isBomb = item.kind === "bomb";
+              visual.root.position.set(
+                curve(itemZ) + base + item.lane * laneWidth,
+                isBomb
+                  ? 0.4
+                  : 0.98 + Math.sin(itemPhase * 1.9 + offset) * 0.035,
+                itemZ,
+              );
+              visual.root.scale.setScalar(duel ? 0.85 : 1);
+              visual.coin.rotation.y =
+                Math.sin(itemPhase * 0.7 + offset) * 0.14;
+            });
+          });
+        }
+      } else {
+        // The ordinary running mode keeps its original centered placement.
+        if (!duel) runners[0].runner.position.x = 0;
       }
       renderer.render(scene, camera);
     };
@@ -1275,6 +1475,7 @@ export default function RideScene({
       changeActivityRef.current = null;
       const geometries = new Set<THREE.BufferGeometry>();
       const allMaterials = new Set<THREE.Material>();
+      cognitiveMaterials.forEach((material) => allMaterials.add(material));
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
           geometries.add(object.geometry);
