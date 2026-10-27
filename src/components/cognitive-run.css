@@ -353,6 +353,8 @@
   background: #fbfcf3f2;
   box-shadow: 0 3px 18px #243e2420;
   backdrop-filter: blur(12px);
+  touch-action: pan-y;
+  user-select: none;
 }
 .cognitive-lane-heading,
 .cognitive-lane-heading strong {
@@ -367,6 +369,24 @@
 }
 .cognitive-lane-heading strong {
   font-size: 10px;
+}
+.cognitive-lane-heading em {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #eaf1df;
+  font-size: 9px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.cognitive-lane-panel.player-2 .cognitive-lane-heading em {
+  background: #e9f1f4;
+}
+.cognitive-steer-hint {
+  margin: 5px 0 0;
+  color: var(--cognitive-player);
+  font-size: 9px;
+  line-height: 1.4;
+  text-align: center;
 }
 .cognitive-lane-heading > span {
   font:
@@ -393,6 +413,10 @@
   background: #f2f5eb;
   font-size: 13px;
   font-weight: 600;
+  transition:
+    background-color 100ms,
+    border-color 100ms,
+    transform 80ms;
 }
 .cognitive-lane-buttons button[aria-pressed="true"] {
   border-color: var(--cognitive-player);
@@ -405,6 +429,9 @@
 }
 .cognitive-lane-buttons button:hover {
   border-color: var(--cognitive-player);
+}
+.cognitive-lane-buttons button:active:not(:disabled) {
+  transform: scale(0.97);
 }
 .cognitive-lane-buttons button:disabled {
   opacity: 0.55;
@@ -647,6 +674,13 @@
     font-size: 9px;
   }
   .cognitive-lane-heading > span {
+    font-size: 8px;
+  }
+  .cognitive-lane-heading em {
+    padding: 1px 3px;
+    font-size: 8px;
+  }
+  .cognitive-steer-hint {
     font-size: 8px;
   }
   .ride-card.has-cognitive-game:fullscreen .cognitive-targets,

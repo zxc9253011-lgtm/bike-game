@@ -232,6 +232,12 @@ export default function App() {
     (value: [PlayerAnalysis, PlayerAnalysis]) => setPlayers(value),
     [],
   );
+  useEffect(() => {
+    // Keep the preview visible from camera activation, before the first race.
+    // Browsers can throttle offscreen video and stall both people's analyses.
+    if (mode === "camera" && !document.fullscreenElement)
+      sceneRef.current?.scrollIntoView({ block: "start", behavior: "instant" });
+  }, [mode]);
   const speedsRef = useRef<[number, number]>([speed, speed2]);
   speedsRef.current = [speed, speed2];
 
@@ -831,6 +837,7 @@ export default function App() {
               </aside>
               {cognitiveActive && (
                 <CognitiveRunHud
+                  onSteer={onSteer}
                   state={cognitive}
                   playerCount={playerCount}
                   onLaneChange={onLaneChange}
@@ -1455,7 +1462,7 @@ export default function App() {
                       <div>
                         <h3>收目標金幣，換道避開炸彈</h3>
                         <p>
-                          跑步模式可開啟專注小遊戲，每四排更換星星／葉子目標。人留在原地踏步，先放下雙手，再抬左／右手換道；也能按選道按鈕或使用方向鍵。停下來想一想也可以。碰到炸彈只會給提醒，旅程仍可繼續。
+                          跑步模式可開啟專注小遊戲，每四排更換星星／葉子目標。人留在原地踏步，身體輕微向左／右傾，或將單手抬到胸前，就會換一條跑道；回正或放下手後可再換一次。也能在自己的選道區左右滑動、按選道按鈕或使用方向鍵。兩人分別站在鏡頭中線兩側，手臂不必抬高。碰到炸彈只會給提醒，旅程仍可繼續。
                         </p>
                       </div>
                     </li>

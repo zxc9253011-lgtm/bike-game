@@ -21,7 +21,8 @@
     "test:tracking": "node tests/tracking-recovery-smoke.mjs",
     "test:running": "node tests/running-smoke.mjs",
     "test:cognitive": "node tests/cognitive-run-smoke.mjs",
-    "test:dual-track": "node tests/dual-track-smoke.mjs"
+    "test:dual-track": "node tests/dual-track-smoke.mjs",
+    "test:subway": "node tests/subway-steering-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

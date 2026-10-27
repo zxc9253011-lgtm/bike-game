@@ -1,16 +1,40 @@
 import type { ExerciseMode } from "./exercise";
-import { visiblePoint, type PosePoint } from "./motion.ts";
+import {
+  ownsPlayerPose,
+  visiblePoint,
+  type CameraRegion,
+  type PosePoint,
+} from "./motion.ts";
+
+export type PlayerFraming = {
+  region: CameraRegion;
+  playerIndex: 0 | 1;
+  playerCount: 1 | 2;
+};
 
 /** Actionable framing guidance without treating a face as a usable leg pose. */
 export function framingFeedback(
   points: PosePoint[] | undefined,
   mode: ExerciseMode,
+  player?: PlayerFraming,
 ): string {
   if (!points || !points.some((point) => visiblePoint(point, 0.35))) {
     return mode === "seated"
       ? "請讓肩膀、髖部、膝蓋和腳踝入鏡"
       : "請站在鏡頭前，讓肩膀到膝蓋入鏡";
   }
+  if (
+    player?.playerCount === 2 &&
+    ([23, 24].every((joint) => visiblePoint(points[joint], 0.4)) ||
+      [11, 12].every((joint) => visiblePoint(points[joint], 0.4))) &&
+    !ownsPlayerPose(
+      points,
+      player.region,
+      player.playerIndex,
+      player.playerCount,
+    )
+  )
+    return "請分站中央虛線兩側，讓肩膀與髖部留在自己的區域";
   const hips = [23, 24].every((joint) => visiblePoint(points[joint]));
   const knees = [25, 26].every((joint) => visiblePoint(points[joint]));
   if (!hips) return "請後退，讓髖部與膝蓋入鏡";

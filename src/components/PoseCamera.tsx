@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { CadenceEstimator } from "../lib/cadence";
 import { HighKneeEstimator } from "../lib/highKnee";
 import { MarchingEstimator } from "../lib/marching";
-import { SteeringEstimator, type SteeringDirection } from "../lib/steering";
+import {
+  SteeringEstimator,
+  type SteeringDirection,
+  type SteeringCue,
+} from "../lib/steering";
 import type { ExerciseMode } from "../lib/exercise";
 import { assetUrl } from "../lib/assets";
 import { framingFeedback } from "../lib/framing";
@@ -11,6 +15,7 @@ import {
   analyzeLegPose,
   cameraRegion,
   mapLandmarksToFrame,
+  ownsPlayerPose,
   visiblePoint,
 } from "../lib/motion";
 import type { CameraRegion, PosePoint } from "../lib/motion";
@@ -49,6 +54,7 @@ export type PlayerAnalysis = {
   highKnees: number;
   /** Completed steps for either standing exercise; seated exercise remains 0. */
   steps: number;
+  steeringCue?: SteeringCue;
 };
 
 export type PoseCameraProps = {
@@ -140,7 +146,16 @@ const blankPlayer = (feedback = "請讓肩膀到雙腳入鏡"): PlayerAnalysis =
   feedback,
   highKnees: 0,
   steps: 0,
+  steeringCue: "positioning",
 });
+
+function steeringMessage(cue: SteeringCue | undefined): string {
+  if (cue === "ready") return "換道就緒：微側傾或抬單手到胸前";
+  if (cue === "left") return "← 正在向左換道";
+  if (cue === "right") return "正在向右換道 →";
+  if (cue === "return") return "回正／放下手後，可再次換道";
+  return "請面向鏡頭、身體回正並放下手";
+}
 
 function cameraError(error: unknown): string {
   const name = error instanceof Error ? error.name : "";
@@ -360,11 +375,12 @@ export default function PoseCamera({
       session: PoseSession,
       feedback: string,
       clearPoints = true,
+      clearSteering = true,
     ) => {
       seated.current[session.index].reset();
       standing.current[session.index].suspend();
       marching.current[session.index].suspend();
-      steering.current[session.index].reset();
+      if (clearSteering) steering.current[session.index].reset();
       if (clearPoints) session.points = undefined;
       analyses.current[session.index] = {
         ...analyses.current[session.index],
@@ -372,6 +388,7 @@ export default function PoseCamera({
         tracking: false,
         quality: 0,
         feedback,
+        steeringCue: steering.current[session.index].cue(),
       };
     };
     // A deadline stops waiting, not the raw WASM operation. Retiring a graph
@@ -528,19 +545,44 @@ export default function PoseCamera({
       const now = performance.now();
       session.health.observe(session.capturedAt, now);
       const points = result.poseLandmarks;
-      const motion = analyzeLegPose(
+      const owned = ownsPlayerPose(
         points,
+        session.region,
+        session.index,
+        playerCount,
+      );
+      const ownedPoints = owned ? points : undefined;
+      // Upper-body steering remains responsive if a knee briefly disappears.
+      // It never supplies cadence or turns a neighbour into the other player.
+      const estimator = steering.current[session.index];
+      if (
+        live.current.running &&
+        live.current.exerciseMode === "running" &&
+        live.current.steeringEnabled
+      ) {
+        const direction = estimator.update(ownedPoints, session.capturedAt, {
+          imageAspect: session.imageAspect,
+        });
+        if (direction !== null)
+          callbacks.current.onSteer?.(session.index, direction);
+      } else estimator.reset();
+      const motion = analyzeLegPose(
+        ownedPoints,
         session.imageAspect,
         live.current.exerciseMode,
       );
-      if (!motion || !points) {
-        steering.current[session.index].reset();
+      if (!motion || !ownedPoints) {
         const keep = session.health.keepMotion(now);
-        const feedback = framingFeedback(points, live.current.exerciseMode);
-        if (!keep) suspendMotion(session, feedback, false);
+        const feedback = framingFeedback(points, live.current.exerciseMode, {
+          region: session.region,
+          playerIndex: session.index,
+          playerCount,
+        });
+        if (!keep) suspendMotion(session, feedback, false, false);
         // Brief partial detections must not erase a complete lift's history.
         // They never generate speed, even while we retain the phase/skeleton.
-        session.points = points ?? (keep ? session.points : undefined);
+        session.points =
+          ownedPoints ?? (!points && keep ? session.points : undefined);
         session.held = !points;
         analyses.current[session.index] = {
           ...analyses.current[session.index],
@@ -550,20 +592,8 @@ export default function PoseCamera({
           feedback,
         };
       } else {
-        if (
-          live.current.running &&
-          live.current.exerciseMode === "running" &&
-          live.current.steeringEnabled
-        ) {
-          const direction = steering.current[session.index].update(
-            points,
-            session.capturedAt,
-          );
-          if (direction !== null)
-            callbacks.current.onSteer?.(session.index, direction);
-        } else steering.current[session.index].reset();
         session.health.valid();
-        session.points = points;
+        session.points = ownedPoints;
         session.held = false;
         let cadence = 0;
         let highKnees = highKneeTotals.current[session.index];
@@ -625,6 +655,7 @@ export default function PoseCamera({
           quality: motion.quality,
         };
       }
+      analyses.current[session.index].steeringCue = estimator.cue();
       // Publish each person's result immediately. A slower second graph must
       // not hide the first person's joints until both sends have completed.
       publish(true);
@@ -730,7 +761,9 @@ export default function PoseCamera({
             const sourceHeight = video.videoHeight;
             const ratio = Math.min(
               1,
-              (playerCount === 2 ? 320 : 480) / sourceWidth,
+              // The extra crop width preserves inner arms without shrinking
+              // either person's body below the former half-frame resolution.
+              (playerCount === 2 ? 384 : 480) / sourceWidth,
               (playerCount === 2 ? 384 : 360) / sourceHeight,
             );
             const width = Math.max(1, Math.round(sourceWidth * ratio));
@@ -801,6 +834,9 @@ export default function PoseCamera({
                 : "0";
             root.dataset.poseInput = sessions
               .map((session) => `${session.crop.width}x${session.crop.height}`)
+              .join(",");
+            root.dataset.poseRegions = sessions
+              .map((session) => `${session.region.x}:${session.region.width}`)
               .join(",");
           }
           previousCaptureAt = capturedAt;
@@ -885,6 +921,7 @@ export default function PoseCamera({
                   ...analyses.current[session.index],
                   cadence: 0,
                   tracking: false,
+                  steeringCue: "positioning",
                   feedback: "分析延遲，正在等待恢復…",
                 };
                 changed = true;
@@ -1169,6 +1206,7 @@ export default function PoseCamera({
               data-high-knees={players[index].highKnees}
               data-steps={players[index].steps}
               data-feedback={players[index].feedback}
+              data-steering-cue={players[index].steeringCue ?? "positioning"}
               style={{
                 display: "block",
                 color: COLORS[index],
@@ -1180,6 +1218,23 @@ export default function PoseCamera({
                 ? `玩家${index + 1}示範`
                 : `玩家${index + 1}${players[index].tracking ? "已辨識" : "待入鏡"}`}
             </span>
+            {mode === "camera" &&
+              steeringEnabled &&
+              exerciseMode === "running" && (
+                <span
+                  className="pose-steering-cue"
+                  style={{
+                    display: "block",
+                    fontSize: 9,
+                    color: COLORS[index],
+                    marginTop: 3,
+                  }}
+                >
+                  {running
+                    ? steeringMessage(players[index].steeringCue)
+                    : "開始後：微側傾／抬手到胸前換道"}
+                </span>
+              )}
             <span
               title={players[index].feedback}
               style={{

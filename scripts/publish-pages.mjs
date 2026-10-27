@@ -92,13 +92,13 @@ try {
     "main",
     sourceFiles,
     root,
-    "Widen dual tracks, randomize coin trails and reduce motion latency",
+    "Make two-player lane changes responsive with lean, chest gestures and swipes",
   );
   await publish(
     "gh-pages",
     await filesUnder(join(root, "dist-pages")),
     join(root, "dist-pages"),
-    "Publish wide dual tracks and faster motion response",
+    "Publish responsive two-player runner steering",
   );
   console.log(
     `Website files uploaded. GitHub Pages deploys the gh-pages branch automatically.\nWebsite: ${website}`,

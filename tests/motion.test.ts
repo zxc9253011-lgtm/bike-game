@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { HighKneeEstimator } from "../src/lib/highKnee.ts";
 import { MarchingEstimator } from "../src/lib/marching.ts";
-import { analyzeLegPose } from "../src/lib/motion.ts";
+import {
+  analyzeLegPose,
+  cameraRegion,
+  mapLandmarksToFrame,
+  ownsPlayerPose,
+  visiblePoint,
+} from "../src/lib/motion.ts";
 import type { PosePoint } from "../src/lib/motion.ts";
 
 const DOWN = -0.65;
@@ -148,5 +154,135 @@ test("running analyzes low alternating knee motion without an absolute lift targ
     highReading.steps,
     0,
     "existing high-knee mode retains its distinct lift-height requirement",
+  );
+});
+
+/** Express one real body's full-frame landmarks in either overlapping crop. */
+function inCrop(points: PosePoint[], player: 0 | 1): PosePoint[] {
+  const region = cameraRegion(player, 2);
+  return points.map((point) => ({
+    ...point,
+    x: (point.x - region.x) / region.width,
+  }));
+}
+
+test("dual crops include an inner arm margin and map landmarks back without changing the mirror convention", () => {
+  assert.deepEqual(cameraRegion(0, 1), { x: 0, width: 1 });
+  assert.deepEqual(cameraRegion(1, 1), { x: 0, width: 1 });
+  const leftPlayer = cameraRegion(0, 2);
+  const rightPlayer = cameraRegion(1, 2);
+  assert.ok(leftPlayer.x < 0.5 && leftPlayer.x + leftPlayer.width === 1);
+  assert.ok(rightPlayer.x === 0 && rightPlayer.width > 0.5);
+  const leftReach = { x: 0.44, y: 0.45, visibility: 0.99 };
+  const leftCrop = inCrop([leftReach], 0);
+  assert.ok(
+    visiblePoint(leftCrop[0]),
+    "P1 inner wrist survives a reach across the old hard half boundary",
+  );
+  const restored = mapLandmarksToFrame(leftCrop, leftPlayer)[0];
+  assert.ok(Math.abs(restored.x - leftReach.x) < 1e-12);
+  assert.equal(restored.y, leftReach.y);
+  const rightReach = inCrop([{ ...leftReach, x: 0.56 }], 1);
+  assert.ok(visiblePoint(rightReach[0]), "P2 has the same inner wrist margin");
+});
+
+test("one body visible in both padded crops belongs only to its own raw camera side", () => {
+  for (const [center, owner] of [
+    [0.55, 0],
+    [0.45, 1],
+  ] as const) {
+    const body = pose(DOWN, DOWN);
+    for (const point of body) point.x += center - 0.5;
+    for (const player of [0, 1] as const) {
+      assert.equal(
+        ownsPlayerPose(
+          inCrop(body, player),
+          cameraRegion(player, 2),
+          player,
+          2,
+        ),
+        player === owner,
+        `the person at ${center} must not be counted for both players`,
+      );
+    }
+  }
+});
+
+test("divider jitter does not give the same central body to both players", () => {
+  for (const center of [0.489, 0.5, 0.511]) {
+    const body = pose(DOWN, DOWN);
+    for (const point of body) point.x += center - 0.5;
+    for (const player of [0, 1] as const) {
+      assert.equal(
+        ownsPlayerPose(
+          inCrop(body, player),
+          cameraRegion(player, 2),
+          player,
+          2,
+        ),
+        false,
+      );
+    }
+  }
+});
+
+test("ownership prefers stable hips while leaning and falls back to shoulders when hips are hidden", () => {
+  const body = pose(DOWN, DOWN);
+  body[23].x = 0.52;
+  body[24].x = 0.58;
+  body[11].x = 0.43;
+  body[12].x = 0.47;
+  assert.equal(ownsPlayerPose(inCrop(body, 0), cameraRegion(0, 2), 0, 2), true);
+  assert.equal(
+    ownsPlayerPose(inCrop(body, 1), cameraRegion(1, 2), 1, 2),
+    false,
+  );
+  body[23].visibility = body[24].visibility = 0.1;
+  assert.equal(ownsPlayerPose(inCrop(body, 1), cameraRegion(1, 2), 1, 2), true);
+  assert.equal(
+    ownsPlayerPose(inCrop(body, 0), cameraRegion(0, 2), 0, 2),
+    false,
+  );
+});
+
+test("ownership rejects missing or nonfinite anchors and does not impose dual restrictions on single player", () => {
+  assert.equal(ownsPlayerPose(undefined, cameraRegion(0, 2), 0, 2), false);
+  const points = pose(DOWN, DOWN);
+  for (const joint of [11, 12, 23, 24]) points[joint].x = NaN;
+  assert.equal(ownsPlayerPose(points, cameraRegion(0, 2), 0, 2), false);
+  assert.equal(ownsPlayerPose(points, cameraRegion(0, 1), 0, 1), true);
+  assert.equal(
+    ownsPlayerPose(pose(DOWN, DOWN), { x: Infinity, width: 0.6 }, 0, 2),
+    false,
+  );
+  assert.equal(visiblePoint({ x: 0.5, y: 0.5, visibility: Infinity }), false);
+  assert.equal(analyzeLegPose(pose(DOWN, DOWN), NaN, "running"), null);
+});
+
+test("a leaning neighbor with hidden hips cannot claim the other player's shoulder-only ownership", () => {
+  const body = pose(DOWN, DOWN);
+  body[23].x = 0.54;
+  body[24].x = 0.58;
+  // Their lean shifts the shoulder midpoint into P2's half, but one shoulder
+  // still spans the divider. P1's visible hips establish the actual owner.
+  body[11].x = 0.38;
+  body[12].x = 0.53;
+  assert.equal(ownsPlayerPose(inCrop(body, 0), cameraRegion(0, 2), 0, 2), true);
+  const neighborCrop = inCrop(body, 1);
+  neighborCrop[23].visibility = neighborCrop[24].visibility = 0.1;
+  assert.equal(
+    ownsPlayerPose(neighborCrop, cameraRegion(1, 2), 1, 2),
+    false,
+    "a shoulder midpoint alone must not turn the same leaning body into P2",
+  );
+
+  body[11].x = 0.47;
+  body[12].x = 0.62;
+  const ownPartial = inCrop(body, 0);
+  ownPartial[23].visibility = ownPartial[24].visibility = 0.1;
+  assert.equal(
+    ownsPlayerPose(ownPartial, cameraRegion(0, 2), 0, 2),
+    false,
+    "the shoulder-only rule applies symmetrically to P1",
   );
 });

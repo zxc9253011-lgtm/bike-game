@@ -10,6 +10,7 @@ import {
   Sparkles,
   Star,
 } from "lucide-react";
+import { useRef, type PointerEvent } from "react";
 import {
   cognitiveRow,
   coinLabels,
@@ -30,6 +31,7 @@ export type CognitiveRunHudProps = {
   state: CognitiveState;
   playerCount: 1 | 2;
   onLaneChange: (player: 0 | 1, lane: Lane) => void;
+  onSteer?: (player: 0 | 1, direction: -1 | 1) => void;
   active: boolean;
   controlsEnabled?: boolean;
   race?: {
@@ -106,7 +108,7 @@ export function CognitiveRunSetup({
           </p>
           <p className="cognitive-control-help">
             <Hand size={15} aria-hidden="true" />
-            人留在原地踏步，抬左／右手換道，或按畫面選道按鈕。不用身體側移。
+            人留在原地踏步，上身輕靠左／右，或抬單手至胸前換一道；回正後可再換道。也可左右滑動選道區，或按選道按鈕。
           </p>
           <p className="cognitive-key-help">
             玩家 1：← ↓ → 或 A / S / D　·　玩家 2：J / K / L
@@ -124,6 +126,7 @@ export function CognitiveRunHud({
   state,
   playerCount,
   onLaneChange,
+  onSteer,
   active,
   controlsEnabled = true,
   race,
@@ -278,47 +281,182 @@ export function CognitiveRunHud({
           })}
         </div>
       </div>
-      <div className="cognitive-controls" aria-label="跑步換道控制">
-        {indices.map((index) => (
-          <div
-            className={`cognitive-lane-panel player-${index + 1}`}
-            key={index}
+      <CognitiveLaneControls
+        state={state}
+        playerCount={playerCount}
+        onLaneChange={onLaneChange}
+        onSteer={onSteer}
+        controlsEnabled={controlsEnabled}
+      />
+    </div>
+  );
+}
+
+type CognitiveLaneControlsProps = Pick<
+  CognitiveRunHudProps,
+  "state" | "playerCount" | "onLaneChange" | "onSteer" | "controlsEnabled"
+>;
+
+export function CognitiveLaneControls({
+  state,
+  playerCount,
+  onLaneChange,
+  onSteer,
+  controlsEnabled = true,
+}: CognitiveLaneControlsProps) {
+  const indices = playerCount === 2 ? ([0, 1] as const) : ([0] as const);
+  return (
+    <div className="cognitive-controls" aria-label="跑步換道控制">
+      {indices.map((index) => (
+        <CognitiveLanePanel
+          key={index}
+          index={index}
+          lane={state[index].lane}
+          controlsEnabled={controlsEnabled}
+          onLaneChange={onLaneChange}
+          onSteer={onSteer}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CognitiveLanePanel({
+  index,
+  lane,
+  onLaneChange,
+  onSteer,
+  controlsEnabled,
+}: {
+  index: 0 | 1;
+  lane: Lane;
+  onLaneChange: CognitiveRunHudProps["onLaneChange"];
+  onSteer: CognitiveRunHudProps["onSteer"];
+  controlsEnabled: boolean;
+}) {
+  const gesture = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    consumed: boolean;
+  } | null>(null);
+  const lastSwipe = useRef(-Infinity);
+  const clearGesture = (event: PointerEvent<HTMLDivElement>) => {
+    if (gesture.current?.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    gesture.current = null;
+  };
+  const advance = (direction: -1 | 1) => {
+    if (onSteer) onSteer(index, direction);
+    else
+      onLaneChange(index, Math.max(-1, Math.min(1, lane + direction)) as Lane);
+  };
+  const followGesture = (
+    event: PointerEvent<HTMLDivElement>,
+    capture = true,
+  ) => {
+    const current = gesture.current;
+    if (!current || current.pointerId !== event.pointerId || !controlsEnabled)
+      return;
+    if (current.consumed) {
+      event.preventDefault();
+      return;
+    }
+    const dx = event.clientX - current.x;
+    const dy = event.clientY - current.y;
+    const horizontal = Math.abs(dx);
+    const vertical = Math.abs(dy);
+    if (vertical >= 20 && vertical > horizontal * 1.2) {
+      clearGesture(event);
+      return;
+    }
+    if (horizontal < 36 || horizontal <= vertical * 1.3) return;
+    // Capture only once the intent is clearly horizontal. Ordinary taps stay
+    // attached to their buttons and vertical touch gestures can still scroll.
+    if (capture) event.currentTarget.setPointerCapture(event.pointerId);
+    current.consumed = true;
+    lastSwipe.current = performance.now();
+    event.preventDefault();
+    advance(dx < 0 ? -1 : 1);
+  };
+  return (
+    <div
+      className={`cognitive-lane-panel player-${index + 1}`}
+      data-swipe-player={index + 1}
+      data-lane={lane}
+      aria-label={`玩家 ${index + 1} 左右滑動換道`}
+      onPointerDown={(event) => {
+        if (
+          !controlsEnabled ||
+          (!event.isPrimary && event.pointerType !== "touch") ||
+          event.button !== 0 ||
+          gesture.current
+        )
+          return;
+        lastSwipe.current = -Infinity;
+        gesture.current = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          consumed: false,
+        };
+      }}
+      onPointerMove={followGesture}
+      onPointerUp={(event) => {
+        followGesture(event, false);
+        clearGesture(event);
+      }}
+      onPointerCancel={clearGesture}
+      onLostPointerCapture={clearGesture}
+      onPointerLeave={(event) => {
+        if (!gesture.current?.consumed) clearGesture(event);
+      }}
+      onClickCapture={(event) => {
+        // A swipe ending over a lane button must not also choose that button.
+        // Keyboard activation has detail=0 and keeps its normal behavior.
+        if (event.detail > 0 && performance.now() - lastSwipe.current < 600) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+    >
+      <div className="cognitive-lane-heading">
+        <strong>
+          <i />
+          玩家 {index + 1}
+          <em aria-live="polite">
+            {lane === -1 ? "左道" : lane === 0 ? "中道" : "右道"}
+          </em>
+        </strong>
+        <span>{index === 0 ? "← ↓ → / A S D" : "J K L"}</span>
+      </div>
+      <div
+        className="cognitive-lane-buttons"
+        role="group"
+        aria-label={`玩家 ${index + 1} 換道`}
+      >
+        {([-1, 0, 1] as const).map((choice) => (
+          <button
+            type="button"
+            key={choice}
+            aria-label={`玩家 ${index + 1} ${choice === -1 ? "左道" : choice === 0 ? "中道" : "右道"}`}
+            aria-pressed={lane === choice}
+            disabled={!controlsEnabled}
+            onClick={() => onLaneChange(index, choice)}
           >
-            <div className="cognitive-lane-heading">
-              <strong>
-                <i />
-                玩家 {index + 1} 選道
-              </strong>
-              <span>{index === 0 ? "← ↓ → / A S D" : "J K L"}</span>
-            </div>
-            <div
-              className="cognitive-lane-buttons"
-              role="group"
-              aria-label={`玩家 ${index + 1} 換道`}
-            >
-              {([-1, 0, 1] as const).map((lane) => (
-                <button
-                  type="button"
-                  key={lane}
-                  aria-label={`玩家 ${index + 1} ${lane === -1 ? "左道" : lane === 0 ? "中道" : "右道"}`}
-                  aria-pressed={state[index].lane === lane}
-                  disabled={!controlsEnabled}
-                  onClick={() => onLaneChange(index, lane)}
-                >
-                  {lane === -1 ? (
-                    <ArrowLeft size={17} aria-hidden="true" />
-                  ) : lane === 1 ? (
-                    <ArrowRight size={17} aria-hidden="true" />
-                  ) : (
-                    <span className="cognitive-center-dot" aria-hidden="true" />
-                  )}
-                  {lane === -1 ? "左邊" : lane === 0 ? "中間" : "右邊"}
-                </button>
-              ))}
-            </div>
-          </div>
+            {choice === -1 ? (
+              <ArrowLeft size={17} aria-hidden="true" />
+            ) : choice === 1 ? (
+              <ArrowRight size={17} aria-hidden="true" />
+            ) : (
+              <span className="cognitive-center-dot" aria-hidden="true" />
+            )}
+            {choice === -1 ? "左邊" : choice === 0 ? "中間" : "右邊"}
+          </button>
         ))}
       </div>
+      <p className="cognitive-steer-hint">輕靠／抬手換道 · 也可左右滑</p>
     </div>
   );
 }

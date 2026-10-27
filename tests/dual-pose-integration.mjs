@@ -193,24 +193,36 @@ for (const scenario of selectedScenarios) {
     }
 
     if (scenario.name === 'both-players') {
-      await page.evaluate(() => {
+      const activeModelsAtFullscreen = await page.evaluate(() => {
+        const models = window.__dualPose.instances.filter((instance) => !instance.closed);
         window.__fullscreenProbe = {
           video: document.querySelector('.pose-video'),
           overlay: document.querySelector('.pose-overlay'),
           stream: document.querySelector('.pose-video').srcObject,
-          frames: window.__dualPose.instances.map((instance) => instance.frames),
+          models,
+          frames: models.map((instance) => instance.frames),
         };
+        return models.length;
       });
+      assert.equal(activeModelsAtFullscreen, 2, 'fullscreen starts with exactly two live model graphs');
       await page.getByRole('button', { name: '切換全螢幕', exact: true }).click();
       await page.waitForFunction(() => document.fullscreenElement?.classList.contains('ride-card'));
       await page.locator('.scene-camera').waitFor({ state: 'visible' });
-      await page.waitForFunction(() => window.__dualPose.instances.every((instance, index) => instance.frames > window.__fullscreenProbe.frames[index]));
+      await page.waitForFunction(() => {
+        const probe = window.__fullscreenProbe;
+        return probe.models.some((instance) => instance.closed)
+          || probe.models.every((instance, index) => instance.frames > probe.frames[index]);
+      });
       assert.equal(await page.evaluate(() => {
         const probe = window.__fullscreenProbe;
+        const current = window.__dualPose.instances.filter((instance) => !instance.closed);
         return document.querySelectorAll('.pose-camera').length === 1
           && probe.video === document.querySelector('.pose-video')
           && probe.overlay === document.querySelector('.pose-overlay')
           && probe.stream === document.querySelector('.pose-video').srcObject
+          && current.length === 2
+          && probe.models.every((instance, index) => !instance.closed && current[index] === instance
+            && instance.frames > probe.frames[index])
           && window.__dualPose.cameraCalls === 1
           && probe.stream.getVideoTracks().every((track) => track.readyState === 'live');
       }), true, 'fullscreen retains the same live camera, overlay, and model instances');
@@ -226,9 +238,23 @@ for (const scenario of selectedScenarios) {
         }
         await page.getByRole('button', { name: '開始競賽', exact: true }).click();
         await page.getByRole('button', { name: '暫停一下', exact: true }).waitFor({ timeout: 10000 });
-        const framesAtStart = await page.evaluate(() => window.__dualPose.instances.map((instance) => instance.frames));
+        await page.evaluate(() => {
+          const models = window.__dualPose.instances.filter((instance) => !instance.closed);
+          window.__activeRaceProbe = { models, frames: models.map((instance) => instance.frames) };
+        });
         await page.waitForTimeout(1800);
-        await page.waitForFunction((before) => window.__dualPose.instances.every((instance, index) => instance.frames > before[index] + 2), framesAtStart, { timeout: 15000 });
+        await page.waitForFunction(() => {
+          const probe = window.__activeRaceProbe;
+          return probe.models.some((instance) => instance.closed)
+            || probe.models.every((instance, index) => instance.frames > probe.frames[index] + 2);
+        }, undefined, { timeout: 15000 });
+        assert.equal(await page.evaluate(() => {
+          const probe = window.__activeRaceProbe;
+          const current = window.__dualPose.instances.filter((instance) => !instance.closed);
+          return current.length === 2 && probe.models.length === 2
+            && probe.models.every((instance, index) => !instance.closed && current[index] === instance
+              && instance.frames > probe.frames[index] + 2);
+        }), true, `${exercise}: the same two live graphs keep producing real pose results`);
         assert.deepEqual(await page.locator('.race-player-speed strong').allTextContents(), ['0.0', '0.0'], `${exercise}: still camera subjects generate no game speed`);
         assert.deepEqual(await page.locator('.race-player-distance strong').allTextContents(), ['0', '0'], `${exercise}: still camera subjects generate no race distance`);
         assert.equal(await page.evaluate(() => [1, 2].every((player) => {
