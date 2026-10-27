@@ -92,13 +92,13 @@ try {
     "main",
     sourceFiles,
     root,
-    "Add coin collection, bomb avoidance and attention practice",
+    "Widen dual tracks, randomize coin trails and reduce motion latency",
   );
   await publish(
     "gh-pages",
     await filesUnder(join(root, "dist-pages")),
     join(root, "dist-pages"),
-    "Publish running cognitive mini-game",
+    "Publish wide dual tracks and faster motion response",
   );
   console.log(
     `Website files uploaded. GitHub Pages deploys the gh-pages branch automatically.\nWebsite: ${website}`,

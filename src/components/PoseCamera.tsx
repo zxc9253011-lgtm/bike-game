@@ -5,6 +5,7 @@ import { MarchingEstimator } from "../lib/marching";
 import { SteeringEstimator, type SteeringDirection } from "../lib/steering";
 import type { ExerciseMode } from "../lib/exercise";
 import { assetUrl } from "../lib/assets";
+import { framingFeedback } from "../lib/framing";
 import { PoseFreshness, PoseTimeoutError, poseDeadline } from "../lib/tracking";
 import {
   analyzeLegPose,
@@ -182,6 +183,7 @@ export default function PoseCamera({
   onSteer,
   steeringEnabled = false,
 }: PoseCameraProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const callbacks = useRef({ onCadence, onTracking, onPlayers, onSteer });
@@ -233,11 +235,16 @@ export default function PoseCamera({
     let generation = 0;
     let automaticRecoveries = 0;
     let frame = 0;
+    let drawFrame = 0;
+    let lastDrawAt = 0;
     let watchdog = 0;
     let stream: MediaStream | null = null;
     let Pose: PoseConstructor | null = null;
     let lastVideoTime = -1;
     let lastInference = 0;
+    let completedCycles = 0;
+    let nextFirst: 0 | 1 = 0;
+    let previousCaptureAt = 0;
     let observedVideoTime = -1;
     let lastVideoAdvanceAt = performance.now();
     let analysisStartedAt = performance.now();
@@ -414,12 +421,21 @@ export default function PoseCamera({
 
     report("loading");
     const draw = () => {
+      if (disposed) return;
+      const drawStartedAt = performance.now();
       const canvas = canvasRef.current;
       const video = videoRef.current;
       const ctx = canvas?.getContext("2d");
       if (!canvas || !video || !ctx) return;
-      const width = video.videoWidth || 960;
-      const height = video.videoHeight || 720;
+      const sourceWidth = video.videoWidth || 960;
+      const sourceHeight = video.videoHeight || 720;
+      // Match the preview aspect ratio without rasterizing an unnecessary
+      // full-resolution camera-sized canvas for a small corner overlay.
+      const width = Math.min(640, sourceWidth);
+      const height = Math.max(
+        1,
+        Math.round((sourceHeight * width) / sourceWidth),
+      );
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
         canvas.height = height;
@@ -440,20 +456,21 @@ export default function PoseCamera({
         ctx.strokeStyle = COLORS[session.index];
         ctx.fillStyle = COLORS[session.index];
         ctx.lineWidth = 3.2 * scale;
-        ctx.shadowColor = COLORS[session.index];
-        ctx.shadowBlur = 5 * scale;
+        ctx.beginPath();
         for (const [a, b] of CONNECTIONS) {
           if (!visiblePoint(points[a], 0.35) || !visiblePoint(points[b], 0.35))
             continue;
-          ctx.beginPath();
           ctx.moveTo(mapped[a].x * width, mapped[a].y * height);
           ctx.lineTo(mapped[b].x * width, mapped[b].y * height);
-          ctx.stroke();
         }
-        ctx.shadowBlur = 0;
+        ctx.stroke();
+        ctx.beginPath();
         for (const joint of JOINTS) {
           if (!visiblePoint(points[joint], 0.35)) continue;
-          ctx.beginPath();
+          ctx.moveTo(
+            mapped[joint].x * width + 4.8 * scale,
+            mapped[joint].y * height,
+          );
           ctx.arc(
             mapped[joint].x * width,
             mapped[joint].y * height,
@@ -461,8 +478,8 @@ export default function PoseCamera({
             0,
             Math.PI * 2,
           );
-          ctx.fill();
         }
+        ctx.fill();
         if (
           live.current.exerciseMode === "standing" &&
           analyses.current[session.index].tracking
@@ -483,6 +500,27 @@ export default function PoseCamera({
         }
         ctx.restore();
       }
+      if (rootRef.current)
+        rootRef.current.dataset.drawMs = (
+          performance.now() - drawStartedAt
+        ).toFixed(1);
+    };
+    // Drawing runs separately from motion/state publication. Both model
+    // callbacks can update immediately, but share one latest-points overlay
+    // paint per animation frame and never exceed 20 overlay paints/second.
+    const queueDraw = () => {
+      if (disposed || drawFrame) return;
+      const paint = (now: number) => {
+        drawFrame = 0;
+        if (disposed) return;
+        if (now - lastDrawAt < 50) {
+          drawFrame = requestAnimationFrame(paint);
+          return;
+        }
+        lastDrawAt = now;
+        draw();
+      };
+      drawFrame = requestAnimationFrame(paint);
     };
 
     const receiveResult = (session: PoseSession, result: PoseResult) => {
@@ -498,12 +536,8 @@ export default function PoseCamera({
       if (!motion || !points) {
         steering.current[session.index].reset();
         const keep = session.health.keepMotion(now);
-        if (!keep)
-          suspendMotion(
-            session,
-            positioningFeedback(live.current.exerciseMode),
-            false,
-          );
+        const feedback = framingFeedback(points, live.current.exerciseMode);
+        if (!keep) suspendMotion(session, feedback, false);
         // Brief partial detections must not erase a complete lift's history.
         // They never generate speed, even while we retain the phase/skeleton.
         session.points = points ?? (keep ? session.points : undefined);
@@ -513,9 +547,7 @@ export default function PoseCamera({
           cadence: 0,
           tracking: false,
           quality: 0,
-          feedback: keep
-            ? "正在重新辨識，請讓膝蓋入鏡"
-            : positioningFeedback(live.current.exerciseMode),
+          feedback,
         };
       } else {
         if (
@@ -595,8 +627,8 @@ export default function PoseCamera({
       }
       // Publish each person's result immediately. A slower second graph must
       // not hide the first person's joints until both sends have completed.
-      draw();
       publish(true);
+      queueDraw();
     };
 
     const initializeModels = async (
@@ -641,8 +673,8 @@ export default function PoseCamera({
       closeModels();
       for (const session of sessions)
         suspendMotion(session, "正在重新啟動動作分析…");
-      draw();
       publish();
+      queueDraw();
       if (automaticRecoveries >= 1) {
         recovering = false;
         fail(
@@ -660,6 +692,9 @@ export default function PoseCamera({
         if (disposed || stopped || generation !== expectedGeneration) return;
         lastVideoTime = -1;
         lastInference = 0;
+        completedCycles = 0;
+        nextFirst = 0;
+        previousCaptureAt = 0;
         recovering = false;
         report("positioning");
         frame = requestAnimationFrame(infer);
@@ -682,7 +717,7 @@ export default function PoseCamera({
         video &&
         video.readyState >= 2 &&
         video.currentTime !== lastVideoTime &&
-        now - lastInference >= (playerCount === 2 ? 80 : 66)
+        now - lastInference >= (playerCount === 2 ? 48 : 40)
       ) {
         lastVideoTime = video.currentTime;
         lastInference = now;
@@ -695,8 +730,8 @@ export default function PoseCamera({
             const sourceHeight = video.videoHeight;
             const ratio = Math.min(
               1,
-              (playerCount === 2 ? 480 : 640) / sourceWidth,
-              (playerCount === 2 ? 640 : 480) / sourceHeight,
+              (playerCount === 2 ? 320 : 480) / sourceWidth,
+              (playerCount === 2 ? 384 : 360) / sourceHeight,
             );
             const width = Math.max(1, Math.round(sourceWidth * ratio));
             const height = Math.max(1, Math.round(sourceHeight * ratio));
@@ -723,7 +758,11 @@ export default function PoseCamera({
             session.imageAspect = width / height;
             session.capturedAt = capturedAt;
           }
-          for (const session of sessions) {
+          const order =
+            playerCount === 2 && nextFirst === 1
+              ? [sessions[1], sessions[0]]
+              : sessions;
+          for (const session of order) {
             if (
               disposed ||
               stopped ||
@@ -743,6 +782,28 @@ export default function PoseCamera({
             if (session.pending === operation) session.pending = null;
             session.firstSend = false;
           }
+          completedCycles += 1;
+          // Give both players an early completed result while the freshness
+          // estimator warms up, then alternate who receives the first result.
+          if (playerCount === 2 && completedCycles >= 2)
+            nextFirst = nextFirst === 0 ? 1 : 0;
+          const root = rootRef.current;
+          if (root) {
+            root.dataset.inferenceMs = Math.max(
+              0,
+              performance.now() - capturedAt,
+            ).toFixed(1);
+            root.dataset.frameRate =
+              previousCaptureAt > 0
+                ? (1000 / Math.max(1, capturedAt - previousCaptureAt)).toFixed(
+                    1,
+                  )
+                : "0";
+            root.dataset.poseInput = sessions
+              .map((session) => `${session.crop.width}x${session.crop.height}`)
+              .join(",");
+          }
+          previousCaptureAt = capturedAt;
         } catch (error) {
           if (!disposed && !stopped && generation === expectedGeneration)
             await recover(error);
@@ -830,8 +891,8 @@ export default function PoseCamera({
               }
             }
             if (changed) {
-              draw();
               publish(true);
+              queueDraw();
             }
             return;
           }
@@ -857,6 +918,7 @@ export default function PoseCamera({
       disposed = true;
       generation += 1;
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(drawFrame);
       window.clearInterval(watchdog);
       stream?.getTracks().forEach((track) => {
         track.onended = null;
@@ -874,6 +936,7 @@ export default function PoseCamera({
 
   return (
     <div
+      ref={rootRef}
       className={`pose-camera pose-camera--${mode}`}
       data-player-count={playerCount}
       data-exercise-mode={exerciseMode}
@@ -1105,11 +1168,12 @@ export default function PoseCamera({
               data-cadence={players[index].cadence.toFixed(2)}
               data-high-knees={players[index].highKnees}
               data-steps={players[index].steps}
+              data-feedback={players[index].feedback}
               style={{
                 display: "block",
                 color: COLORS[index],
                 fontSize: 9,
-                whiteSpace: "nowrap",
+                whiteSpace: players[index].tracking ? "nowrap" : "normal",
               }}
             >
               {mode === "demo"
@@ -1122,9 +1186,9 @@ export default function PoseCamera({
                 display: "block",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                whiteSpace: players[index].tracking ? "nowrap" : "normal",
                 color: "#dae6d1",
-                fontSize: 8,
+                fontSize: mode === "camera" && !players[index].tracking ? 9 : 8,
                 marginTop: 2,
               }}
             >

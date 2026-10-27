@@ -32,6 +32,11 @@ export type CognitiveRunHudProps = {
   onLaneChange: (player: 0 | 1, lane: Lane) => void;
   active: boolean;
   controlsEnabled?: boolean;
+  race?: {
+    speeds: [number, number];
+    distances: [number, number];
+    targetMeters: number;
+  };
 };
 
 export type CognitiveRunResultsProps = {
@@ -95,7 +100,10 @@ export function CognitiveRunSetup({
               避開炸彈
             </span>
           </div>
-          <p>記住這輪的目標，只收指定圖案的金幣；每 4 排會換一次目標。</p>
+          <p>
+            記住這輪的目標，只收指定圖案的金幣；隨機排列與連續金幣串交替出現，每
+            4 排會換一次目標。
+          </p>
           <p className="cognitive-control-help">
             <Hand size={15} aria-hidden="true" />
             人留在原地踏步，抬左／右手換道，或按畫面選道按鈕。不用身體側移。
@@ -118,6 +126,7 @@ export function CognitiveRunHud({
   onLaneChange,
   active,
   controlsEnabled = true,
+  race,
 }: CognitiveRunHudProps) {
   const indices = playerCount === 2 ? ([0, 1] as const) : ([0] as const);
   return (
@@ -132,13 +141,13 @@ export function CognitiveRunHud({
           </span>
           <span>
             <Bomb size={12} aria-hidden="true" />
-            每排都要避開炸彈
+            看目標，收幣避彈
           </span>
         </div>
         <div className="cognitive-target-grid">
           {indices.map((index) => {
             const player = state[index];
-            const row = cognitiveRow(player.nextRow, index);
+            const row = cognitiveRow(player.nextRow, index, player.seed);
             const accuracy = player.choices
               ? Math.round((player.coins / player.choices) * 100)
               : null;
@@ -149,6 +158,8 @@ export function CognitiveRunHud({
                 data-cognitive-player={index + 1}
                 data-lane={player.lane}
                 data-next-row={player.nextRow}
+                data-cognitive-seed={player.seed}
+                data-row-pattern={row.pattern}
                 aria-label={`玩家 ${index + 1} 專注任務`}
               >
                 <div className="cognitive-player-heading">
@@ -157,9 +168,11 @@ export function CognitiveRunHud({
                     玩家 {index + 1}
                   </span>
                   <span>
-                    {player.nextRow > 0 && player.nextRow % 4 === 0
-                      ? "目標換囉"
-                      : "這輪請收"}
+                    {row.pattern === "coin-trail"
+                      ? "連續金幣串"
+                      : player.nextRow > 0 && player.nextRow % 4 === 0
+                        ? "目標換囉"
+                        : "這輪請收"}
                   </span>
                 </div>
                 <div
@@ -171,6 +184,48 @@ export function CognitiveRunHud({
                   <CoinMark kind={row.target} />
                   <strong>{coinLabels[row.target]}</strong>
                 </div>
+                {race && (
+                  <div
+                    className={`cognitive-race race-player-${index + 1}`}
+                    aria-label={`玩家 ${index + 1} 跑步狀態`}
+                  >
+                    <div className="cognitive-race-metrics">
+                      <div className="race-player-speed">
+                        <strong data-metric="speed">
+                          {Math.max(0, race.speeds[index]).toFixed(1)}
+                        </strong>
+                        <span>km/h</span>
+                      </div>
+                      <div className="race-player-distance">
+                        <strong data-metric="distance">
+                          {Math.max(0, race.distances[index]).toFixed(0)}
+                        </strong>
+                        <span> / {race.targetMeters} 公尺</span>
+                      </div>
+                    </div>
+                    <div
+                      className="cognitive-race-progress"
+                      role="progressbar"
+                      aria-label={`玩家 ${index + 1} 跑步進度`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.round(
+                        Math.min(
+                          100,
+                          (Math.max(0, race.distances[index]) /
+                            Math.max(1, race.targetMeters)) *
+                            100,
+                        ),
+                      )}
+                    >
+                      <span
+                        style={{
+                          width: `${Math.min(100, (Math.max(0, race.distances[index]) / Math.max(1, race.targetMeters)) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
                 <div className="cognitive-stats">
                   <span>
                     <strong data-cognitive-metric="score">

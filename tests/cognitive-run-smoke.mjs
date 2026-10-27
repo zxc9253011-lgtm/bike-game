@@ -25,6 +25,13 @@ function card(page, player = 1) {
 function laneButton(page, player, lane) {
   return page.getByRole('button', { name: '玩家 ' + player + ' ' + laneNames[lane + 1], exact: true });
 }
+async function rowFor(page, index, player = 1) {
+  const raw = await card(page, player).getAttribute('data-cognitive-seed');
+  assert.notEqual(raw, null, 'the visible layout carries its session seed');
+  const seed = Number(raw);
+  assert.ok(Number.isInteger(seed), 'each HUD exposes its session seed for consistent preview and collision checks');
+  return cognitiveRow(index, player - 1, seed);
+}
 function laneFor(row, result) {
   const item = row.items.find((item) => result === 'bomb' ? item.kind === 'bomb'
     : result === 'coin' ? item.kind === row.target : item.kind !== row.target && item.kind !== 'bomb');
@@ -197,7 +204,7 @@ try {
   if (!selected || selected === 'single') await withPage('single', async (page) => {
     const toggle = page.getByRole('switch', { name: '專注小遊戲', exact: true });
     assert.equal(await toggle.getAttribute('aria-checked'), 'true', 'running enables the cognitive game by default');
-    assert.equal((await stats(page)).target, cognitiveRow(0, 0).target);
+    assert.equal((await stats(page)).target, (await rowFor(page, 0, 1)).target);
     await toggle.click();
     await page.locator('.ride-scene canvas[data-cognitive-game="false"]').waitFor();
     assert.equal(await card(page).count(), 0, 'disabled gameplay hides targets and lane controls');
@@ -208,7 +215,7 @@ try {
     await slider.fill('90');
     await page.keyboard.press('a');
     assert.equal((await stats(page)).lane, 0, 'typing while a form control has focus does not steer');
-    await choose(page, 1, laneFor(cognitiveRow(0, 0), 'coin'));
+    await choose(page, 1, laneFor((await rowFor(page, 0, 1)), 'coin'));
     await start(page);
     assert.equal(await toggle.isDisabled(), true, 'an active game cannot be reset accidentally by its setup switch');
     await crossed(page, 1, 0);
@@ -220,7 +227,7 @@ try {
     const frozen = await stats(page);
     await page.waitForTimeout(1300);
     assert.deepEqual(await stats(page), frozen, 'pausing freezes every resolved choice and score');
-    await choose(page, 1, laneFor(cognitiveRow(1, 0), 'bomb'));
+    await choose(page, 1, laneFor((await rowFor(page, 1, 1)), 'bomb'));
     await start(page);
     await crossed(page, 1, 1);
     result = await stats(page);
@@ -229,26 +236,26 @@ try {
     assert.equal(result.score, 13, 'a bomb does not remove previously earned points');
     assert.equal(await page.locator('.start-button.is-running').count(), 1, 'a bomb gives feedback rather than ending the workout');
     assert.equal(await page.locator('.speed-reading [data-metric="speed"]').textContent(), '12.0', 'a bomb does not impair the exercise-controlled speed');
-    const wrongLane = laneFor(cognitiveRow(2, 0), 'wrong');
+    const wrongLane = laneFor((await rowFor(page, 2, 1)), 'wrong');
     await page.keyboard.press(['a', 's', 'd'][wrongLane + 1]);
     await assertLane(page, 1, wrongLane);
     await crossed(page, 1, 2);
     assert.equal((await stats(page)).coins, 1, 'the wrong coin type is not rewarded as a requested coin');
-    const correctLane = laneFor(cognitiveRow(3, 0), 'coin');
+    const correctLane = laneFor((await rowFor(page, 3, 1)), 'coin');
     await page.keyboard.press('ArrowDown');
     if (correctLane !== 0) await page.keyboard.press(correctLane < 0 ? 'ArrowLeft' : 'ArrowRight');
     await assertLane(page, 1, correctLane);
     await crossed(page, 1, 3);
-    assert.equal((await stats(page)).target, cognitiveRow(4, 0).target, 'the requested shape changes after four real row crossings');
-    assert.notEqual(cognitiveRow(4, 0).target, cognitiveRow(0, 0).target);
-    await choose(page, 1, laneFor(cognitiveRow(4, 0), 'coin'));
+    assert.equal((await stats(page)).target, (await rowFor(page, 4, 1)).target, 'the requested shape changes after four real row crossings');
+    assert.notEqual((await rowFor(page, 4, 1)).target, (await rowFor(page, 0, 1)).target);
+    await choose(page, 1, laneFor((await rowFor(page, 4, 1)), 'coin'));
     await crossed(page, 1, 4);
     const records = await endRide(page);
     assert.equal(records.length, 1);
     assert.equal(records[0].exerciseMode, 'running');
-    assert.ok(records[0].distance * 1000 >= cognitiveRow(4, 0).distance);
+    assert.ok(records[0].distance * 1000 >= (await rowFor(page, 4, 1)).distance);
     assert.deepEqual(records[0].cognitive[0], {
-      coins: 3, avoided: 4, bombHits: 1, wrongCoins: 1, choices: 5, score: 42, accuracy: 60,
+      coins: 3, avoided: 3, bombHits: 1, wrongCoins: 1, choices: 5, score: 39, accuracy: 60,
     });
     await page.locator('[data-cognitive-result-player="1"]').waitFor();
     await page.getByRole('button', { name: '開始一段新旅程', exact: true }).click();
@@ -259,7 +266,7 @@ try {
     await page.getByRole('button', { name: '我的紀錄', exact: true }).click();
     await page.getByRole('dialog').waitFor();
     assert.match(await page.locator('.record-row').textContent(), /金幣|專注|辨識/, 'saved cognitive results are visible after reloading');
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('forest-pedal-rides') || '[]')[0].cognitive[0].score), 42);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('forest-pedal-rides') || '[]')[0].cognitive[0].score), 39);
     await closeDialog(page);
     await page.getByRole('button', { name: '原地踏步跑步', exact: true }).click();
     await page.setViewportSize({ width: 390, height: 844 });
@@ -273,8 +280,8 @@ try {
     await page.getByRole('combobox', { name: '競賽距離', exact: true }).selectOption('500');
     await page.getByRole('slider', { name: '示範踩踏速度', exact: true }).fill('90');
     await page.getByRole('slider', { name: '玩家 2 示範速度', exact: true }).fill('90');
-    await choose(page, 1, laneFor(cognitiveRow(0, 0), 'coin'));
-    await choose(page, 2, laneFor(cognitiveRow(0, 1), 'bomb'));
+    await choose(page, 1, laneFor((await rowFor(page, 0, 1)), 'coin'));
+    await choose(page, 2, laneFor((await rowFor(page, 0, 2)), 'bomb'));
     await start(page);
     await crossed(page, 1, 0);
     await crossed(page, 2, 0);
@@ -286,8 +293,8 @@ try {
     const before = [await stats(page, 1), await stats(page, 2)];
     await page.waitForTimeout(1100);
     assert.deepEqual([await stats(page, 1), await stats(page, 2)], before, 'both players pause together without resolving another row');
-    await choose(page, 1, laneFor(cognitiveRow(1, 0), 'wrong'));
-    const secondLane = laneFor(cognitiveRow(1, 1), 'coin');
+    await choose(page, 1, laneFor((await rowFor(page, 1, 1)), 'wrong'));
+    const secondLane = laneFor((await rowFor(page, 1, 2)), 'coin');
     await page.locator('.scene-location h2').click();
     await page.keyboard.press(['j', 'k', 'l'][secondLane + 1]);
     await assertLane(page, 2, secondLane);

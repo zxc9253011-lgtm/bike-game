@@ -809,9 +809,24 @@ export default function App() {
                           ? `玩家 1 ${players[0].tracking ? "已辨識" : "未入鏡"} · 玩家 2 ${players[1].tracking ? "已辨識" : "未入鏡"}`
                           : players[0].tracking
                             ? "已偵測到你，標點會跟著動作移動"
-                            : stepping
-                              ? "請讓肩膀、髖部與膝蓋入鏡"
-                              : "請讓肩膀、膝蓋和雙腳完整入鏡"}
+                            : players[0].feedback}
+                  {mode === "camera" &&
+                    tracking !== "loading" &&
+                    tracking !== "error" &&
+                    players
+                      .slice(0, playerCount)
+                      .some((player) => !player.tracking) && (
+                      <div className="camera-framing-guidance">
+                        {[
+                          ...new Set(
+                            players
+                              .slice(0, playerCount)
+                              .filter((player) => !player.tracking)
+                              .map((player) => player.feedback),
+                          ),
+                        ].join("；")}
+                      </div>
+                    )}
                 </div>
               </aside>
               {cognitiveActive && (
@@ -821,6 +836,15 @@ export default function App() {
                   onLaneChange={onLaneChange}
                   active={running}
                   controlsEnabled={!modal && !saved}
+                  race={
+                    playerCount === 2
+                      ? {
+                          speeds: [speed, speed2],
+                          distances: session.distances,
+                          targetMeters: raceMeters,
+                        }
+                      : undefined
+                  }
                 />
               )}
               {playerCount === 2 && (
@@ -831,6 +855,7 @@ export default function App() {
                   running={running}
                   countdown={countdown}
                   result={session.result}
+                  hideStats={cognitiveActive}
                 />
               )}
               <div className="scene-status">

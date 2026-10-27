@@ -11,6 +11,8 @@ const MOVE_BAND = 0.025;
 const RETURN_BAND = 0.012;
 const MIN_STEP_MS = 250;
 const MAX_STEP_MS = 6000;
+const STILL_WINDOW_MS = 600;
+const STILL_RANGE = 0.0045;
 
 /**
  * Detects gentle marching from relative knee motion, with no knee-height goal.
@@ -26,7 +28,9 @@ export class MarchingEstimator {
   private lastStepSide: Side | null = null;
   private intervals: number[] = [];
   private cadence = 0;
+  private measuredCadence = 0;
   private steps = 0;
+  private motionSamples: Array<{ time: number; difference: number }> = [];
 
   reset(): void {
     this.steps = 0;
@@ -43,6 +47,8 @@ export class MarchingEstimator {
     this.lastStepSide = null;
     this.intervals = [];
     this.cadence = 0;
+    this.measuredCadence = 0;
+    this.motionSamples = [];
   }
 
   update(
@@ -70,18 +76,38 @@ export class MarchingEstimator {
       this.lastFrameTime = timeMs;
       this.filtered = [leftLift, rightLift];
       this.neutral = [leftLift, rightLift];
+      this.motionSamples = [{ time: timeMs, difference: leftLift - rightLift }];
       return this.reading();
     }
 
     const dt = timeMs - this.lastFrameTime;
     this.lastFrameTime = timeMs;
-    const smoothing = 1 - Math.exp(-dt / 90);
+    const smoothing = 1 - Math.exp(-dt / 45);
     this.filtered[0] += (leftLift - this.filtered[0]) * smoothing;
     this.filtered[1] += (rightLift - this.filtered[1]) * smoothing;
+    // A slow, continuous step naturally changes less near its highest point.
+    // Give that pace a little more observation time, while ordinary marching
+    // still stops after a 600ms still window rather than the old 1.8–6s delay.
+    const stillWindow = Math.max(
+      STILL_WINDOW_MS,
+      Math.min(1500, (this.intervals.at(-1) ?? 0) * 0.3),
+    );
+    this.motionSamples.push({
+      time: timeMs,
+      difference: this.filtered[0] - this.filtered[1],
+    });
+    // Retain the sample at/before the window boundary, so low frame rates
+    // cannot manufacture a full window from just a few milliseconds.
+    while (
+      this.motionSamples.length > 1 &&
+      this.motionSamples[1].time <= timeMs - stillWindow
+    )
+      this.motionSamples.shift();
 
+    let stopAfter = 1800;
     if (this.lastStepTime !== null) {
       const period = this.intervals.at(-1);
-      const stopAfter =
+      stopAfter =
         period === undefined
           ? 1800
           : Math.min(MAX_STEP_MS, Math.max(1800, period * 1.8));
@@ -91,6 +117,28 @@ export class MarchingEstimator {
       if (timeMs - this.lastStepTime > MAX_STEP_MS) {
         this.lastStepTime = null;
         this.intervals = [];
+      }
+    }
+    if (
+      this.motionSamples.length > 1 &&
+      timeMs - this.motionSamples[0].time >= stillWindow
+    ) {
+      const differences = this.motionSamples.map((sample) => sample.difference);
+      const range = Math.max(...differences) - Math.min(...differences);
+      if (range <= STILL_RANGE) {
+        // Stop promptly when the person has stopped or is holding one knee.
+        // Keep the timing reference, so the next slow alternating step still
+        // measures its real period instead of starting over at zero forever.
+        this.cadence = 0;
+      } else if (
+        range >= MOVE_BAND / 2 &&
+        this.lastStepTime !== null &&
+        timeMs - this.lastStepTime < stopAfter
+      ) {
+        // A very slow knee briefly becomes almost still at its highest point.
+        // Resume its measured pace when real movement returns, without making
+        // another step or losing the alternating-step timing reference.
+        this.cadence = this.measuredCadence;
       }
     }
 
@@ -142,6 +190,7 @@ export class MarchingEstimator {
               : (sorted[midpoint - 1] + sorted[midpoint]) / 2;
           this.cadence = 30000 / median;
         } else this.cadence = 15;
+        this.measuredCadence = this.cadence;
         this.lastStepTime = timeMs;
         this.lastStepSide = side;
       }

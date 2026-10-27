@@ -7,6 +7,7 @@ export type RaceHudProps = {
   running: boolean;
   countdown: number | null;
   result: null | { winner: 1 | 2 | "tie"; elapsed: number };
+  hideStats?: boolean;
 };
 
 function nonNegative(value: number) {
@@ -25,6 +26,7 @@ export default function RaceHud({
   running,
   countdown,
   result,
+  hideStats = false,
 }: RaceHudProps) {
   const safeTarget = Math.max(1, nonNegative(targetMeters));
   const safeDistances = distances.map(nonNegative);
@@ -33,72 +35,74 @@ export default function RaceHud({
 
   return (
     <>
-      <div className="race-hud" aria-label="雙人競賽狀態">
-        <div className="race-hud-heading">
-          <span>
-            <Flag size={13} aria-hidden="true" />
-            {result
-              ? "競賽完成"
-              : countdown !== null
-                ? "準備出發"
-                : running
-                  ? "競賽進行中"
-                  : "雙人競賽"}
-          </span>
-          <span>終點 {safeTarget} 公尺</span>
-        </div>
-        <div className="race-player-grid">
-          {([0, 1] as const).map((index) => {
-            const progress = Math.min(
-              100,
-              (safeDistances[index] / safeTarget) * 100,
-            );
-            return (
-              <div
-                key={index}
-                className={`race-player-card race-player-${index + 1}`}
-                data-player={index + 1}
-                aria-label={`玩家 ${index + 1} 狀態`}
-              >
-                <div className="race-player-heading">
-                  <span className="race-player-name">
-                    <i aria-hidden="true" />
-                    玩家 {index + 1}
-                  </span>
-                  {leadingPlayer === index && (
-                    <span className="race-lead-label">領先</span>
-                  )}
-                </div>
-                <div className="race-player-metrics">
-                  <div className="race-player-speed">
-                    <strong data-metric="speed">
-                      {nonNegative(speeds[index]).toFixed(1)}
-                    </strong>
-                    <span>km/h</span>
-                  </div>
-                  <div className="race-player-distance">
-                    <strong data-metric="distance">
-                      {safeDistances[index].toFixed(0)}
-                    </strong>
-                    <span> / {safeTarget} 公尺</span>
-                  </div>
-                </div>
+      {!hideStats && (
+        <div className="race-hud" aria-label="雙人競賽狀態">
+          <div className="race-hud-heading">
+            <span>
+              <Flag size={13} aria-hidden="true" />
+              {result
+                ? "競賽完成"
+                : countdown !== null
+                  ? "準備出發"
+                  : running
+                    ? "競賽進行中"
+                    : "雙人競賽"}
+            </span>
+            <span>終點 {safeTarget} 公尺</span>
+          </div>
+          <div className="race-player-grid">
+            {([0, 1] as const).map((index) => {
+              const progress = Math.min(
+                100,
+                (safeDistances[index] / safeTarget) * 100,
+              );
+              return (
                 <div
-                  className="race-progress-track"
-                  role="progressbar"
-                  aria-label={`玩家 ${index + 1} 騎行進度`}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(progress)}
-                  aria-valuetext={`${safeDistances[index].toFixed(0)} / ${safeTarget} 公尺`}
+                  key={index}
+                  className={`race-player-card race-player-${index + 1}`}
+                  data-player={index + 1}
+                  aria-label={`玩家 ${index + 1} 狀態`}
                 >
-                  <span style={{ width: `${progress}%` }} />
+                  <div className="race-player-heading">
+                    <span className="race-player-name">
+                      <i aria-hidden="true" />
+                      玩家 {index + 1}
+                    </span>
+                    {leadingPlayer === index && (
+                      <span className="race-lead-label">領先</span>
+                    )}
+                  </div>
+                  <div className="race-player-metrics">
+                    <div className="race-player-speed">
+                      <strong data-metric="speed">
+                        {nonNegative(speeds[index]).toFixed(1)}
+                      </strong>
+                      <span>km/h</span>
+                    </div>
+                    <div className="race-player-distance">
+                      <strong data-metric="distance">
+                        {safeDistances[index].toFixed(0)}
+                      </strong>
+                      <span> / {safeTarget} 公尺</span>
+                    </div>
+                  </div>
+                  <div
+                    className="race-progress-track"
+                    role="progressbar"
+                    aria-label={`玩家 ${index + 1} 騎行進度`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(progress)}
+                    aria-valuetext={`${safeDistances[index].toFixed(0)} / ${safeTarget} 公尺`}
+                  >
+                    <span style={{ width: `${progress}%` }} />
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
       {countdown !== null && (
         <div className="race-countdown" role="status" aria-live="assertive">
           <span>準備好了嗎？</span>

@@ -2,8 +2,8 @@ import type { PosePoint } from "./motion";
 
 export type SteeringDirection = -1 | 1;
 
-const HOLD_MS = 350;
-const COOLDOWN_MS = 700;
+const HOLD_MS = 180;
+const COOLDOWN_MS = 450;
 const MAX_FRAME_GAP_MS = 3000;
 
 function visible(point: PosePoint | undefined): point is PosePoint {

@@ -24,9 +24,9 @@ test("a held hand at startup cannot steer until both hands are first lowered", (
     assert.equal(estimator.update(pose(0.27), time), null);
   assert.equal(estimator.update(pose(), 1000), null);
   assert.equal(estimator.update(pose(0.27), 1100), null);
-  assert.equal(estimator.update(pose(0.27), 1449), null);
+  assert.equal(estimator.update(pose(0.27), 1279), null);
   assert.equal(
-    estimator.update(pose(0.27), 1450),
+    estimator.update(pose(0.27), 1280),
     -1,
     "anatomical left becomes mirrored screen-left",
   );
@@ -36,12 +36,12 @@ test("one raised hand steers once and must be lowered before another command", (
   const estimator = new SteeringEstimator();
   estimator.update(pose(), 0);
   estimator.update(pose(0.27), 100);
-  assert.equal(estimator.update(pose(0.27), 450), -1);
-  for (let time = 500; time <= 3000; time += 100)
+  assert.equal(estimator.update(pose(0.27), 280), -1);
+  for (let time = 300; time <= 3000; time += 100)
     assert.equal(estimator.update(pose(0.27), time), null);
   estimator.update(pose(), 3100);
   estimator.update(pose(0.7, 0.27), 3200);
-  assert.equal(estimator.update(pose(0.7, 0.27), 3550), 1);
+  assert.equal(estimator.update(pose(0.7, 0.27), 3380), 1);
 });
 
 test("a brief wrist crossing and shoulder-height jitter never count as a held gesture", () => {
@@ -54,9 +54,9 @@ test("a brief wrist crossing and shoulder-height jitter never count as a held ge
     );
   }
   estimator.update(pose(0.27), 3100);
-  assert.equal(estimator.update(pose(0.27), 3449), null);
+  assert.equal(estimator.update(pose(0.27), 3279), null);
   assert.equal(
-    estimator.update(pose(), 3450),
+    estimator.update(pose(), 3280),
     null,
     "lowering just before the hold completes cancels it",
   );
@@ -72,18 +72,19 @@ test("raising both hands cancels the candidate and requires a clear neutral post
   assert.equal(estimator.update(pose(0.7, 0.27), 1500), null);
   estimator.update(pose(), 1600);
   estimator.update(pose(0.7, 0.27), 1700);
-  assert.equal(estimator.update(pose(0.7, 0.27), 2050), 1);
+  assert.equal(estimator.update(pose(0.7, 0.27), 1880), 1);
 });
 
 test("cooldown prevents a quick release from generating rapid lane commands", () => {
   const estimator = new SteeringEstimator();
   estimator.update(pose(), 0);
   estimator.update(pose(0.27), 100);
-  assert.equal(estimator.update(pose(0.27), 450), -1);
-  estimator.update(pose(), 500);
-  estimator.update(pose(0.7, 0.27), 550);
-  assert.equal(estimator.update(pose(0.7, 0.27), 900), null);
-  assert.equal(estimator.update(pose(0.7, 0.27), 1150), 1);
+  assert.equal(estimator.update(pose(0.27), 280), -1);
+  estimator.update(pose(), 320);
+  estimator.update(pose(0.7, 0.27), 350);
+  assert.equal(estimator.update(pose(0.7, 0.27), 530), null);
+  assert.equal(estimator.update(pose(0.7, 0.27), 729), null);
+  assert.equal(estimator.update(pose(0.7, 0.27), 730), 1);
 });
 
 test("low confidence, missing joints and nonfinite coordinates discard a partial gesture", () => {
@@ -135,9 +136,30 @@ test("two players use independent hand histories and reset cancels a raised hand
   players.forEach((estimator) => estimator.update(pose(), 0));
   players[0].update(pose(0.27), 100);
   players[1].update(pose(0.7, 0.27), 150);
-  assert.equal(players[0].update(pose(0.27), 450), -1);
-  assert.equal(players[1].update(pose(0.7, 0.27), 500), 1);
+  assert.equal(players[0].update(pose(0.27), 280), -1);
+  assert.equal(players[1].update(pose(0.7, 0.27), 330), 1);
   players[0].reset();
   assert.equal(players[0].update(pose(0.27), 900), null);
   assert.equal(players[1].update(pose(0.7, 0.27), 1000), null);
+});
+
+test("a stable gesture sampled at 10 fps responds within 250 milliseconds", () => {
+  const estimator = new SteeringEstimator();
+  estimator.update(pose(), 0);
+  assert.equal(estimator.update(pose(0.27), 100), null);
+  assert.equal(
+    estimator.update(pose(0.27), 200),
+    null,
+    "one short observation is still rejected",
+  );
+  assert.equal(
+    estimator.update(pose(0.27), 300),
+    -1,
+    "200ms of stable evidence reacts without the former 350ms wait",
+  );
+  assert.equal(
+    estimator.update(pose(0.27), 400),
+    null,
+    "the faster response must not repeat while held",
+  );
 });

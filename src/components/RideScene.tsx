@@ -17,6 +17,10 @@ type Props = {
 };
 type Vec = [number, number, number];
 
+const DUAL_ROAD_WIDTH = 11.4;
+const DUAL_PLAYER_CENTERS = [-2.7, 2.7] as const;
+const DUAL_LANE_WIDTH = 1.6;
+
 const palettes = {
   forest: {
     sky: "#dce9df",
@@ -215,9 +219,11 @@ export default function RideScene({
       side: THREE.BackSide,
       depthWrite: false,
     });
-    scene.add(
-      new THREE.Mesh(new THREE.SphereGeometry(245, 24, 18), skyMaterial),
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(245, 24, 18),
+      skyMaterial,
     );
+    scene.add(sky);
 
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(450, 450),
@@ -266,8 +272,67 @@ export default function RideScene({
       scene.add(mesh);
       return mesh;
     }
-    ribbon(6.6, curve, 0.005, materials.edge);
-    ribbon(6.1, curve, 0.018, materials.road);
+    const singleRoadEdge = ribbon(6.6, curve, 0.005, materials.edge);
+    const singleRoad = ribbon(6.1, curve, 0.018, materials.road);
+    const dualRoad = new THREE.Group();
+    dualRoad.name = "Wide-Dual-Six-Lane-Track";
+    scene.add(dualRoad);
+    dualRoad.add(ribbon(DUAL_ROAD_WIDTH + 0.5, curve, 0.007, materials.edge));
+    dualRoad.add(ribbon(DUAL_ROAD_WIDTH, curve, 0.022, materials.road));
+    const lineWhite = new THREE.MeshBasicMaterial({
+      color: "#fffdf3",
+      toneMapped: false,
+    });
+    const lineGold = new THREE.MeshBasicMaterial({
+      color: "#e6b83f",
+      toneMapped: false,
+    });
+    const lineBorder = new THREE.MeshBasicMaterial({
+      color: "#9b855d",
+      toneMapped: false,
+    });
+    // A solid double centre line separates the players; each player owns three
+    // full-width lanes. All ribbons follow the very same road curve.
+    for (const offset of [-0.13, 0.13]) {
+      dualRoad.add(ribbon(0.19, (z) => curve(z) + offset, 0.034, lineBorder));
+      dualRoad.add(ribbon(0.105, (z) => curve(z) + offset, 0.038, lineGold));
+    }
+    for (const offset of [-5.45, 5.45]) {
+      dualRoad.add(ribbon(0.12, (z) => curve(z) + offset, 0.035, lineWhite));
+    }
+    const dashOffsets = [-3.5, -1.9, 1.9, 3.5];
+    const dashesPerLine = 43;
+    const dashGeometry = new THREE.BoxGeometry(0.12, 0.014, 2.0);
+    const laneDashes = new THREE.InstancedMesh(
+      dashGeometry,
+      lineWhite,
+      dashOffsets.length * dashesPerLine,
+    );
+    laneDashes.name = "Four-White-Dashed-Lane-Separators";
+    laneDashes.frustumCulled = false;
+    laneDashes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    dualRoad.add(laneDashes);
+    const dashMatrix = new THREE.Matrix4();
+    const dashPosition = new THREE.Vector3();
+    const dashRotation = new THREE.Quaternion();
+    const dashScale = new THREE.Vector3(1, 1, 1);
+    const dashUp = new THREE.Vector3(0, 1, 0);
+    let dashTravel = 0;
+    const updateLaneDashes = () => {
+      let index = 0;
+      for (const lateral of dashOffsets)
+        for (let segment = 0; segment < dashesPerLine; segment++) {
+          const z = 18 - segment * 4.8 + dashTravel;
+          const slope = (curve(z + 0.1) - curve(z - 0.1)) / 0.2;
+          dashPosition.set(curve(z) + lateral, 0.042, z);
+          dashRotation.setFromAxisAngle(dashUp, Math.atan(slope));
+          dashMatrix.compose(dashPosition, dashRotation, dashScale);
+          laneDashes.setMatrixAt(index++, dashMatrix);
+        }
+      laneDashes.instanceMatrix.needsUpdate = true;
+    };
+    updateLaneDashes();
+    dualRoad.visible = false;
     const waterCenter = (z: number) =>
       curve(z) + 15 + Math.sin(z * 0.055) * 3.5;
     const streamShore = ribbon(5.3, waterCenter, -0.018, materials.edge);
@@ -689,6 +754,22 @@ export default function RideScene({
       return { mesh, entries: batch.entries, kind: batch.kind };
     });
 
+    // Detailed scenery is retained for single-player routes, but not submitted
+    // to the GPU in the dual track. The road and sky remain in the same scene.
+    const trackEssentials = new Set<THREE.Object3D>([
+      sky,
+      ground,
+      hemi,
+      sun,
+      sun.target,
+      singleRoad,
+      singleRoadEdge,
+      dualRoad,
+    ]);
+    const detailObjects = scene.children.filter(
+      (object) => !trackEssentials.has(object),
+    );
+
     // Each rider owns all animated objects and materials. Only immutable world
     // geometry is shared, so one player's pedalling cannot move the other.
     function createCyclist(player: 1 | 2) {
@@ -920,6 +1001,24 @@ export default function RideScene({
       return { runner, body, legs, arms, phase: 0, traveled: 0 };
     }
     const runners = [createRunner(1), createRunner(2)];
+    // Dual mode uses two cheap, pooled floor ellipses instead of rendering a
+    // second shadow-map pass for every articulated body part.
+    const blobGeometry = new THREE.CircleGeometry(1, 24);
+    const blobMaterial = new THREE.MeshBasicMaterial({
+      color: "#41503e",
+      transparent: true,
+      opacity: 0.17,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const blobShadows = [0, 1].map((index) => {
+      const blob = new THREE.Mesh(blobGeometry, blobMaterial);
+      blob.name = `P${index + 1}-Simple-Floor-Shadow`;
+      blob.rotation.x = -Math.PI / 2;
+      blob.visible = false;
+      scene.add(blob);
+      return blob;
+    });
 
     // Fixed-size item pools share their geometry and never create meshes in
     // the animation loop. Shapes remain readable without flashing effects.
@@ -1032,8 +1131,9 @@ export default function RideScene({
       return { root, coin, body, star, leaf, bomb };
     }
     const cognitivePools = Array.from({ length: 2 }, () =>
-      Array.from({ length: 2 }, () => ({
+      Array.from({ length: 4 }, () => ({
         index: -1,
+        seed: -1,
         row: cognitiveRow(0, 0),
         items: Array.from({ length: 3 }, createCognitiveItem),
       })),
@@ -1063,30 +1163,46 @@ export default function RideScene({
       "position",
       new THREE.BufferAttribute(motePositions, 3),
     );
-    scene.add(
-      new THREE.Points(
-        moteGeometry,
-        new THREE.PointsMaterial({
-          color: "#fff4cc",
-          size: 0.055,
-          transparent: true,
-          opacity: 0.75,
-          depthWrite: false,
-        }),
-      ),
+    const motes = new THREE.Points(
+      moteGeometry,
+      new THREE.PointsMaterial({
+        color: "#fff4cc",
+        size: 0.055,
+        transparent: true,
+        opacity: 0.75,
+        depthWrite: false,
+      }),
     );
+    scene.add(motes);
+    const applyTrackMode = () => {
+      const duel = motionRef.current.playerCount === 2;
+      singleRoad.visible = singleRoadEdge.visible = !duel;
+      dualRoad.visible = duel;
+      detailObjects.forEach((object) => {
+        object.visible = !duel;
+      });
+      motes.visible = !duel;
+      renderer.domElement.dataset.dualTrack = duel ? "wide" : "standard";
+      renderer.domElement.dataset.laneMarkings = String(duel);
+      renderer.domElement.dataset.trackWidth = String(
+        duel ? DUAL_ROAD_WIDTH : 6.1,
+      );
+      renderer.domElement.dataset.laneCount = duel ? "6" : "3";
+    };
 
     changeRouteRef.current = (next) => {
+      applyTrackMode();
+      const detailed = motionRef.current.playerCount === 1;
       const palette = palettes[next];
       (scene.background as THREE.Color).set(palette.sky);
       (scene.fog as THREE.Fog).color.set(palette.horizon);
       skyMaterial.uniforms.top.value.set(palette.sky);
       skyMaterial.uniforms.bottom.value.set(palette.horizon);
       sun.color.set(palette.light);
-      coastalWater.visible = next === "coast";
-      settingSun.visible = next === "sunset";
-      stream.visible = next !== "coast";
-      streamShore.visible = next !== "coast";
+      coastalWater.visible = detailed && next === "coast";
+      settingSun.visible = detailed && next === "sunset";
+      stream.visible = detailed && next !== "coast";
+      streamShore.visible = detailed && next !== "coast";
       sun.position.set(
         next === "sunset" ? -30 : -18,
         next === "sunset" ? 19 : 28,
@@ -1094,8 +1210,9 @@ export default function RideScene({
       );
       batches.forEach((batch) => {
         batch.mesh.visible =
-          batch.kind === "world" ||
-          (batch.kind === "coast" ? next === "coast" : next !== "coast");
+          detailed &&
+          (batch.kind === "world" ||
+            (batch.kind === "coast" ? next === "coast" : next !== "coast"));
       });
       const label =
         motionRef.current.exerciseMode === "running"
@@ -1126,13 +1243,26 @@ export default function RideScene({
     const framePlayers = () => {
       const duel = motionRef.current.playerCount === 2;
       if (duel) {
-        camera.position.set(2.7, 5.3, 15);
-        camera.lookAt(-1.7, 1.2, -9);
+        camera.fov = 52;
+        const fitDistance =
+          (DUAL_ROAD_WIDTH / 2 + 0.45) /
+          (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
+        const distance = Math.max(9.2, fitDistance);
+        camera.position.set(
+          0,
+          6.4 + Math.max(0, distance - 9.2) * 0.1,
+          2 + distance,
+        );
+        camera.lookAt(0, 0.8, -4.5);
       } else {
         camera.position.set(3.5, 4.8, 12.3);
         camera.lookAt(-3, 1.1, -10);
+        camera.fov = camera.aspect < 1.1 ? 58 : 48;
       }
-      camera.fov = camera.aspect < 1.1 ? 58 : 48;
+      const mobileRunnerScale = duel && camera.aspect < 0.8 ? 1.28 : 1.06;
+      runners.forEach(({ runner }) =>
+        runner.scale.setScalar(mobileRunnerScale),
+      );
       camera.updateProjectionMatrix();
     };
     const resize = () => {
@@ -1145,7 +1275,7 @@ export default function RideScene({
     };
     changePlayersRef.current = (count) => {
       players.forEach((player, index) => {
-        const x = count === 2 ? (index === 0 ? -1.1 : 1.1) : 0;
+        const x = count === 2 ? DUAL_PLAYER_CENTERS[index as 0 | 1] : 0;
         player.cyclist.position.set(x, 0.04, 2);
         runners[index].runner.position.set(x, 0.04, 2);
         player.traveled = 0;
@@ -1179,6 +1309,8 @@ export default function RideScene({
     changePlayersRef.current(motionRef.current.playerCount);
     let frame = 0,
       previous = 0;
+    let qualityKey = "";
+    let lastRenderProfileAt = -Infinity;
     function animateCyclist(
       model: ReturnType<typeof createCyclist>,
       velocity: number,
@@ -1317,6 +1449,7 @@ export default function RideScene({
         now - previous < 1000 / 30
       )
         return;
+      const cpuRenderStartedAt = performance.now();
       const dt = previous ? Math.min((now - previous) / 1000, 0.05) : 0;
       previous = now;
       const {
@@ -1329,6 +1462,33 @@ export default function RideScene({
         cognitiveGame,
       } = motionRef.current;
       const duel = playerCount === 2;
+      const nextQualityKey = `${duel}:${motionRef.current.analysisActive}`;
+      if (qualityKey !== nextQualityKey) {
+        qualityKey = nextQualityKey;
+        const ratio = Math.min(
+          window.devicePixelRatio || 1,
+          motionRef.current.analysisActive ? 1 : duel ? 1.25 : 1.8,
+        );
+        renderer.setPixelRatio(ratio);
+        renderer.shadowMap.enabled = !duel;
+        sun.castShadow = !duel;
+        if (duel && sun.shadow.map) {
+          sun.shadow.map.dispose();
+          sun.shadow.map = null;
+        }
+        renderer.domElement.dataset.shadowStyle = duel ? "blob" : "dynamic";
+        const shadowSize = duel
+          ? 512
+          : motionRef.current.analysisActive
+            ? 768
+            : 1536;
+        if (sun.shadow.mapSize.x !== shadowSize) {
+          sun.shadow.map?.dispose();
+          sun.shadow.map = null;
+          sun.shadow.mapSize.set(shadowSize, shadowSize);
+          sun.shadow.needsUpdate = true;
+        }
+      }
       const cognitiveEnabled =
         exerciseMode === "running" && !!cognitiveGame?.enabled;
       const cognitiveFlag = String(cognitiveEnabled);
@@ -1340,6 +1500,12 @@ export default function RideScene({
           : "0,0";
       if (renderer.domElement.dataset.lanes !== laneData)
         renderer.domElement.dataset.lanes = laneData;
+      const seedData =
+        cognitiveEnabled && cognitiveGame
+          ? cognitiveGame.players.map((player) => player.seed).join(",")
+          : "";
+      if (renderer.domElement.dataset.cognitiveSeeds !== seedData)
+        renderer.domElement.dataset.cognitiveSeeds = seedData;
       const velocities = [currentSpeed, opponentSpeed].map((value) =>
         isRunning && Number.isFinite(value) ? Math.max(0, value) / 3.6 : 0,
       );
@@ -1347,7 +1513,11 @@ export default function RideScene({
         ? (velocities[0] + velocities[1]) / 2
         : velocities[0];
       const travel = velocity * dt;
-      if (travel > 0) {
+      if (duel && travel > 0) {
+        dashTravel = (dashTravel + travel) % 4.8;
+        updateLaneDashes();
+      }
+      if (!duel && travel > 0) {
         for (const item of moving) {
           item.z += travel;
           if (item.z > 18) item.z -= 184;
@@ -1395,7 +1565,8 @@ export default function RideScene({
         players.forEach((player, index) => {
           const z = 2 + (index === 0 ? -lead / 2 : lead / 2);
           player.cyclist.position.z = z;
-          player.cyclist.position.x = curve(z) + (index === 0 ? -1.1 : 1.1);
+          player.cyclist.position.x =
+            curve(z) + DUAL_PLAYER_CENTERS[index as 0 | 1];
           runners[index].runner.position.z = z;
           if (!cognitiveEnabled)
             runners[index].runner.position.x = player.cyclist.position.x;
@@ -1410,14 +1581,14 @@ export default function RideScene({
           const player = cognitiveGame.players[playerIndex];
           const runner = runners[playerIndex].runner;
           const z = runner.position.z;
-          const base = duel ? (playerIndex === 0 ? -1.2 : 1.2) : 0;
-          const laneWidth = duel ? 0.65 : 1.4;
+          const base = duel ? DUAL_PLAYER_CENTERS[playerIndex] : 0;
+          const laneWidth = duel ? DUAL_LANE_WIDTH : 1.4;
           const targetX = curve(z) + base + player.lane * laneWidth;
           const difference = targetX - runner.position.x;
           runner.position.x =
             Math.abs(difference) < 0.01
               ? targetX
-              : runner.position.x + difference * (1 - Math.exp(-dt * 12));
+              : runner.position.x + difference * (1 - Math.exp(-dt * 22));
           const distanceValue =
             playerDistances?.[playerIndex] ?? player.distance;
           const distance = Number.isFinite(distanceValue)
@@ -1425,11 +1596,14 @@ export default function RideScene({
             : 0;
           cognitivePools[playerIndex].forEach((pool, offset) => {
             const rowIndex = player.nextRow + offset;
-            if (pool.index !== rowIndex) {
+            if (pool.index !== rowIndex || pool.seed !== player.seed) {
               pool.index = rowIndex;
-              pool.row = cognitiveRow(rowIndex, playerIndex);
-              pool.row.items.forEach((item, index) => {
-                const visual = pool.items[index];
+              pool.seed = player.seed;
+              pool.row = cognitiveRow(rowIndex, playerIndex, player.seed);
+              pool.items.forEach((visual, index) => {
+                const item = pool.row.items[index];
+                visual.root.visible = !!item;
+                if (!item) return;
                 const isBomb = item.kind === "bomb";
                 visual.coin.visible = !isBomb;
                 visual.bomb.visible = isBomb;
@@ -1441,9 +1615,10 @@ export default function RideScene({
               });
             }
             const remaining = pool.row.distance - distance;
-            pool.row.items.forEach((item, index) => {
-              const visual = pool.items[index];
-              visual.root.visible = present && remaining >= -0.1;
+            pool.items.forEach((visual, index) => {
+              const item = pool.row.items[index];
+              visual.root.visible = !!item && present && remaining >= -0.1;
+              if (!item) return;
               const itemZ = z - remaining;
               const isBomb = item.kind === "bomb";
               visual.root.position.set(
@@ -1453,7 +1628,7 @@ export default function RideScene({
                   : 0.98 + Math.sin(itemPhase * 1.9 + offset) * 0.035,
                 itemZ,
               );
-              visual.root.scale.setScalar(duel ? 0.85 : 1);
+              visual.root.scale.setScalar(duel ? 1.2 : 1.05);
               visual.coin.rotation.y =
                 Math.sin(itemPhase * 0.7 + offset) * 0.14;
             });
@@ -1463,7 +1638,38 @@ export default function RideScene({
         // The ordinary running mode keeps its original centered placement.
         if (!duel) runners[0].runner.position.x = 0;
       }
+      blobShadows.forEach((blob, index) => {
+        blob.visible = duel;
+        if (!duel) return;
+        const actor =
+          exerciseMode === "running"
+            ? runners[index].runner
+            : players[index].cyclist;
+        blob.position.set(actor.position.x, 0.032, actor.position.z + 0.1);
+        blob.scale.set(
+          exerciseMode === "running" ? 0.62 : 0.8,
+          exerciseMode === "running" ? 0.36 : 1.1,
+          1,
+        );
+      });
+      const previewSeeds = cognitiveEnabled
+        ? cognitivePools.map((pools) => pools[0].seed).join(",")
+        : "";
+      if (renderer.domElement.dataset.previewSeeds !== previewSeeds)
+        renderer.domElement.dataset.previewSeeds = previewSeeds;
       renderer.render(scene, camera);
+      const profileAt = performance.now();
+      if (profileAt - lastRenderProfileAt >= 500) {
+        lastRenderProfileAt = profileAt;
+        // CPU submission time only: this does not wait for a GPU fence.
+        renderer.domElement.dataset.renderMs = (
+          profileAt - cpuRenderStartedAt
+        ).toFixed(2);
+        renderer.domElement.dataset.renderTiming = "cpu";
+        renderer.domElement.dataset.drawCalls = String(
+          renderer.info.render.calls,
+        );
+      }
     };
     frame = requestAnimationFrame(render);
 

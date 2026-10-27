@@ -8,17 +8,20 @@ const LOW_STEP = -0.68;
 function replay(period = 1000, baseline: [number, number] = [DOWN, DOWN]) {
   const estimator = new MarchingEstimator();
   let reading = estimator.update(...baseline, 0);
+  let lastStepReading = reading;
   for (let time = 50; time <= period * 8; time += 50) {
     const cycle = Math.floor(time / period);
     const phase = (time % period) / period;
     const lift = phase > 0.2 && phase < 0.65 ? 0.07 : 0;
+    const previousSteps = reading.steps;
     reading = estimator.update(
       baseline[0] + (cycle % 2 === 0 ? lift : 0),
       baseline[1] + (cycle % 2 === 1 ? lift : 0),
       time,
     );
+    if (reading.steps > previousSteps) lastStepReading = reading;
   }
-  return { estimator, reading };
+  return { estimator, reading, lastStepReading };
 }
 
 test("gentle alternating steps count while both knees stay far below hip height", () => {
@@ -49,6 +52,19 @@ test("the first gentle movement starts a conservative speed estimate", () => {
   estimator.update(DOWN, DOWN, 0);
   const reading = estimator.update(LOW_STEP, DOWN, 300);
   assert.equal(reading.steps, 1);
+  assert.equal(reading.cadence, 15);
+});
+
+test("a tiny gentle lift responds within its first 100ms camera interval", () => {
+  const estimator = new MarchingEstimator();
+  estimator.update(DOWN, DOWN, 0);
+  estimator.update(DOWN, DOWN, 100);
+  const reading = estimator.update(DOWN + 0.035, DOWN, 200);
+  assert.equal(
+    reading.steps,
+    1,
+    "the unchanged movement band is reached without an extra delayed frame",
+  );
   assert.equal(reading.cadence, 15);
 });
 
@@ -84,13 +100,16 @@ test("holding one leg or repeatedly using the same leg does not repeat steps", (
 
 test("slow alternating steps continue to generate cadence at 2 to 5 seconds per step", () => {
   for (const period of [2000, 2400, 3000, 5000]) {
-    const { reading } = replay(period);
+    const { reading, lastStepReading } = replay(period);
     assert.equal(
       reading.steps,
       8,
       `${period}ms: all shallow steps should count`,
     );
-    assert.ok(Math.abs(reading.cadence - 30000 / period) < 0.001);
+    assert.ok(
+      Math.abs(lastStepReading.cadence - 30000 / period) < 0.001,
+      "the measured pace stays available when each slow step occurs, even after a still interval",
+    );
   }
 });
 
@@ -118,6 +137,73 @@ test("stopping returns to zero and leaves the completed count intact", () => {
     assert.equal(result.steps, reading.steps);
   }
   assert.equal(estimator.update(DOWN, DOWN, 27050).cadence, 0);
+});
+
+test("a 10fps stationary signal stops within 800ms while retaining slow-step timing", () => {
+  const estimator = new MarchingEstimator();
+  estimator.update(DOWN, DOWN, 0);
+  let reading = estimator.update(LOW_STEP, DOWN, 100);
+  for (let time = 200; time <= 1100; time += 100) {
+    reading = estimator.update(
+      time < 600 ? LOW_STEP : DOWN,
+      time >= 700 ? LOW_STEP : DOWN,
+      time,
+    );
+  }
+  assert.equal(reading.steps, 2);
+  assert.ok(reading.cadence > 0);
+  let stoppedAt: number | null = null;
+  for (let time = 1200; time <= 4600; time += 100) {
+    const jitter = Math.sin(time / 70) * 0.0005;
+    reading = estimator.update(DOWN + jitter, DOWN - jitter, time);
+    assert.equal(reading.steps, 2, "still camera noise cannot add steps");
+    if (reading.cadence === 0 && stoppedAt === null) stoppedAt = time;
+  }
+  assert.ok(
+    stoppedAt !== null && stoppedAt - 1200 <= 800,
+    `stopped at ${stoppedAt}`,
+  );
+  reading = estimator.update(LOW_STEP, DOWN, 4700);
+  assert.equal(reading.steps, 3);
+  assert.ok(
+    reading.cadence > 0 && reading.cadence < 15,
+    "the next slow alternate step uses its retained measured interval rather than a fresh provisional speed",
+  );
+});
+
+test("holding one raised leg stops promptly without counting or resuming phantom steps", () => {
+  const estimator = new MarchingEstimator();
+  estimator.update(DOWN, DOWN, 0);
+  assert.equal(estimator.update(LOW_STEP, DOWN, 100).steps, 1);
+  let reading;
+  for (let time = 200; time <= 1000; time += 100) {
+    reading = estimator.update(LOW_STEP, DOWN, time);
+    assert.equal(reading.steps, 1);
+  }
+  assert.equal(reading?.cadence, 0);
+});
+
+test("continuous slow knee waves retain motion through the top of each gentle step", () => {
+  for (const period of [2000, 2400, 3000, 5000]) {
+    const estimator = new MarchingEstimator();
+    let reading = estimator.update(DOWN, DOWN, 0);
+    for (let time = 50; time <= period * 6; time += 50) {
+      const cycle = Math.floor(time / period);
+      const lift = Math.sin(Math.PI * ((time % period) / period)) * 0.07;
+      reading = estimator.update(
+        cycle % 2 ? DOWN : DOWN + lift,
+        cycle % 2 ? DOWN + lift : DOWN,
+        time,
+      );
+      if (time >= period * 2)
+        assert.ok(
+          reading.cadence > 0,
+          `${period}ms: continuous slow motion was marked stationary at ${time}`,
+        );
+    }
+    assert.equal(reading.steps, 6);
+    assert.ok(Math.abs(reading.cadence - 30000 / period) < 0.001);
+  }
 });
 
 test("suspend preserves steps but requires new motion; reset clears the workout", () => {
