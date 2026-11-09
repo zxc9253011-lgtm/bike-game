@@ -92,13 +92,13 @@ try {
     "main",
     sourceFiles,
     root,
-    "Make two-player lane changes responsive with lean, chest gestures and swipes",
+    "Add two-player boxing with punch tracking, crossed-arm defence and a 3D ring",
   );
   await publish(
     "gh-pages",
     await filesUnder(join(root, "dist-pages")),
     join(root, "dist-pages"),
-    "Publish responsive two-player runner steering",
+    "Publish two-player boxing arena and motion controls",
   );
   console.log(
     `Website files uploaded. GitHub Pages deploys the gh-pages branch automatically.\nWebsite: ${website}`,

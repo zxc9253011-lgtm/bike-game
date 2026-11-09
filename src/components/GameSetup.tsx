@@ -1,5 +1,6 @@
 import {
   Activity,
+  Swords,
   Bike,
   Flag,
   Footprints,
@@ -33,11 +34,13 @@ export default function GameSetup({
   compact = false,
 }: GameSetupProps) {
   const exerciseHint =
-    exerciseMode === "running"
-      ? "原地輕鬆交替踏步，不必抬高膝蓋"
-      : exerciseMode === "standing"
-        ? "左右交替，膝蓋抬到髖部高度才計分"
-        : "坐穩椅子，雙腳交替踩踏";
+    exerciseMode === "boxing"
+      ? "面向鏡頭對空出拳，雙手交叉在胸前防守"
+      : exerciseMode === "running"
+        ? "原地輕鬆交替踏步，不必抬高膝蓋"
+        : exerciseMode === "standing"
+          ? "左右交替，膝蓋抬到髖部高度才計分"
+          : "坐穩椅子，雙腳交替踩踏";
 
   if (compact) {
     return (
@@ -58,6 +61,7 @@ export default function GameSetup({
             <option value="seated">坐姿踩踏</option>
             <option value="standing">站姿高抬膝</option>
             <option value="running">原地踏步跑步</option>
+            <option value="boxing">雙人拳擊</option>
           </select>
         </label>
         <label className="game-setup-compact-field">
@@ -134,6 +138,16 @@ export default function GameSetup({
           >
             <Activity size={17} aria-hidden="true" />
             原地踏步跑步
+          </button>
+          <button
+            type="button"
+            className="boxing-mode"
+            aria-pressed={exerciseMode === "boxing"}
+            disabled={locked}
+            onClick={() => onExerciseModeChange("boxing")}
+          >
+            <Swords size={17} aria-hidden="true" />
+            雙人拳擊
           </button>
         </div>
         <p className="game-setup-hint">{exerciseHint}</p>

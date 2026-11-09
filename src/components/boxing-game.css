@@ -1,0 +1,845 @@
+.boxing-game {
+  color: #3c543d;
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 22px 30px 38px;
+}
+.boxing-game button,
+.boxing-game select {
+  font: inherit;
+  cursor: pointer;
+}
+.boxing-game button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.boxing-game button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.boxing-game button:focus-visible,
+.boxing-game select:focus-visible {
+  outline: 3px solid #b2cb84;
+  outline-offset: 3px;
+}
+.boxing-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.boxing-page-header > span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 750;
+}
+.boxing-back,
+.boxing-history-button {
+  background: #fff;
+  border: 1px solid #e1e8da;
+  border-radius: 10px;
+  padding: 9px 12px;
+  color: #607456;
+  font-size: 12px !important;
+}
+.boxing-intro {
+  padding: 34px 0 23px;
+}
+.boxing-intro > span {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #829674;
+}
+.boxing-intro h1 {
+  font-size: clamp(25px, 3vw, 38px);
+  margin: 6px 0 8px;
+  line-height: 1.3;
+}
+.boxing-intro p {
+  color: #85907d;
+  font-size: 13px;
+  margin: 0;
+  line-height: 1.7;
+}
+.boxing-source-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  background: white;
+  border: 1px solid #e6eadf;
+  border-radius: 13px;
+  padding: 13px 17px;
+  margin-bottom: 18px;
+}
+.boxing-source-switch {
+  display: flex;
+  background: #f3f6ed;
+  padding: 3px;
+  border-radius: 9px;
+  gap: 4px;
+}
+.boxing-source-switch button {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #8b987f;
+  font-size: 12px;
+  padding: 8px 16px;
+  border-radius: 7px;
+}
+.boxing-source-switch button[aria-pressed="true"] {
+  color: #56774b;
+  background: #fff;
+  border-color: #e0e7d7;
+  box-shadow: 0 2px 6px #38523708;
+}
+.boxing-source-bar label {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  font-size: 12px;
+}
+.boxing-source-bar select {
+  padding: 8px 26px 8px 11px;
+  color: #526b46;
+  border-radius: 7px;
+  border: 1px solid #e2e8d9;
+  background: #f8faf4;
+}
+.boxing-source-bar > span {
+  font-size: 11px;
+  color: #98a18e;
+}
+.boxing-stage {
+  position: relative;
+  min-width: 0;
+  height: 780px;
+  background: #23383b;
+  border: 1px solid #e2e7d8;
+  border-radius: 19px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.boxing-stage:fullscreen,
+.boxing-stage-expanded {
+  width: 100vw;
+  height: 100dvh;
+  border: 0;
+  border-radius: 0;
+}
+.boxing-stage-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+.boxing-stage-title {
+  position: absolute;
+  left: 22px;
+  top: 17px;
+  color: #edf1df;
+  z-index: 2;
+}
+.boxing-stage-title span {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+}
+.boxing-stage-title strong {
+  display: block;
+  font-size: 18px;
+  letter-spacing: 3px;
+  margin-top: 4px;
+}
+.boxing-expand {
+  position: absolute;
+  z-index: 8;
+  right: 18px;
+  top: 17px;
+  border: 1px solid #d8e6d633;
+  color: #edf2df;
+  background: #263c3be8;
+  border-radius: 50%;
+  width: 35px;
+  height: 35px;
+}
+.boxing-scoreboard {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
+  position: absolute;
+  z-index: 3;
+  left: 22px;
+  top: 86px;
+  width: min(660px, calc(100% - 360px));
+  align-items: center;
+}
+.boxing-player-card {
+  background: #fbfcf3f5;
+  border: 1px solid #f4f7e3;
+  padding: 12px 14px;
+  border-radius: 12px;
+  --boxing-color: #6b8d4c;
+}
+.boxing-player-2 {
+  --boxing-color: #5086a9;
+  grid-column: 3;
+  grid-row: 1;
+}
+.boxing-player-heading {
+  display: flex;
+  gap: 9px;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+.boxing-player-heading > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.boxing-player-heading i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--boxing-color);
+}
+.boxing-player-heading b {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--boxing-color);
+}
+.boxing-player-score {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 7px;
+}
+.boxing-player-score strong {
+  font-size: 30px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--boxing-color);
+}
+.boxing-player-score > span {
+  font-size: 10px;
+}
+.boxing-player-score em {
+  margin-left: auto;
+  font-size: 9px;
+  font-style: normal;
+  color: #8d9982;
+}
+.boxing-health {
+  height: 5px;
+  background: #e9eddc;
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 7px 0;
+}
+.boxing-health > span {
+  display: block;
+  height: 100%;
+  background: var(--boxing-color);
+  transition: width 140ms ease;
+}
+.boxing-player-card > small {
+  font-size: 9px;
+  color: #8b997e;
+}
+.boxing-clock {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #f5f2d9;
+  gap: 5px;
+  min-width: 67px;
+  text-shadow: 0 1px 8px #0008;
+}
+.boxing-clock strong {
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+}
+.boxing-clock span {
+  font-size: 9px;
+}
+.boxing-camera {
+  position: absolute;
+  top: 66px;
+  right: 18px;
+  z-index: 4;
+  width: 298px;
+  padding: 8px;
+  border: 1px solid #e9efdc;
+  border-radius: 13px;
+  background: #f9fbed;
+  box-shadow: 0 6px 18px #10252018;
+}
+.boxing-camera-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #58714b;
+  margin-bottom: 7px;
+  font-size: 12px;
+}
+.boxing-camera-heading > span {
+  margin-left: auto;
+  font-size: 9px;
+  border-radius: 4px;
+  padding: 3px 5px;
+  background: #e8edda;
+  color: #889775;
+}
+.boxing-camera-viewport {
+  height: 213px;
+}
+.boxing-camera > p {
+  color: #89967b;
+  font-size: 9px;
+  line-height: 1.5;
+  margin: 6px 3px 0;
+}
+.boxing-announcer {
+  position: absolute;
+  z-index: 3;
+  top: 226px;
+  left: 22px;
+  max-width: calc(100% - 365px);
+  font-size: 11px;
+  color: #edecca;
+  line-height: 1.6;
+  background: #213634d6;
+  border: 1px solid #dfe7c82a;
+  padding: 6px 10px;
+  border-radius: 7px;
+}
+.boxing-action-panels {
+  position: absolute;
+  z-index: 3;
+  bottom: 88px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  width: min(780px, calc(100% - 38px));
+}
+.boxing-action-panel {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #dfe8d6;
+  border-radius: 11px;
+  padding: 9px;
+  background: #fbfcf3;
+  color: #66814f;
+}
+.boxing-action-player-2 {
+  color: #5284a0;
+}
+.boxing-action-panel > strong {
+  display: flex;
+  justify-content: space-between;
+  gap: 7px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+.boxing-action-panel > strong span {
+  font-size: 9px;
+  font-weight: 400;
+  opacity: 0.8;
+}
+.boxing-action-panel > p {
+  font-size: 11px;
+  margin: 0;
+  line-height: 1.5;
+}
+.boxing-demo-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr 1fr;
+  gap: 5px;
+}
+.boxing-demo-buttons button {
+  border: 1px solid #dfe7d5;
+  background: #f0f5e9;
+  border-radius: 7px;
+  min-height: 39px;
+  padding: 7px;
+  font-size: 11px;
+  color: inherit;
+}
+.boxing-action-player-2 button {
+  background: #edf3f6;
+  border-color: #dbe6ec;
+}
+.boxing-demo-buttons button[aria-pressed="true"] {
+  color: white;
+  border-color: #74915b;
+  background: #74915b;
+}
+.boxing-action-player-2 button[aria-pressed="true"] {
+  border-color: #588baa;
+  background: #588baa;
+}
+.boxing-match-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+}
+.boxing-match-controls button {
+  white-space: nowrap;
+  min-height: 44px;
+  padding: 9px 16px;
+  border-radius: 9px;
+  border: 1px solid #e3eacb;
+  font-size: 12px;
+}
+.boxing-start {
+  color: #405b35;
+  background: #e7f4c7;
+  font-weight: 700 !important;
+  min-width: 165px;
+}
+.boxing-start.is-running {
+  background: #f0f3e7;
+}
+.boxing-reset {
+  color: #627953;
+  background: #fafbf2;
+}
+.boxing-finish {
+  color: #d8e3c7;
+  border-color: #d6e4c733 !important;
+  background: #263a35d9;
+}
+.boxing-countdown {
+  position: absolute;
+  z-index: 9;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  color: #f2f5db;
+  background: #1a303570;
+  pointer-events: none;
+}
+.boxing-countdown strong {
+  font-size: 110px;
+  line-height: 1;
+}
+.boxing-countdown > span {
+  font-size: 15px;
+}
+.boxing-result {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  top: 51%;
+  transform: translate(-50%, -50%);
+  width: min(430px, calc(100% - 36px));
+  padding: 25px;
+  border: 1px solid #f2f6dc;
+  border-radius: 18px;
+  background: #fbfcf3;
+  box-shadow: 0 14px 55px #101c3c44;
+  text-align: center;
+}
+.boxing-result > svg {
+  margin: 0 auto 7px;
+  color: #a68b3d;
+}
+.boxing-result > span {
+  display: block;
+  font-size: 11px;
+  color: #8f9c7b;
+}
+.boxing-result h2 {
+  margin: 7px 0;
+  font-size: 24px;
+  color: #526b42;
+}
+.boxing-result > p {
+  margin: 8px 0 14px;
+  font-size: 16px;
+}
+.boxing-result > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  padding-top: 6px;
+  border-top: 1px solid #e2e8d9;
+}
+.boxing-result > div p {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.boxing-result > div span,
+.boxing-result > small {
+  font-size: 10px;
+  color: #8c9a7d;
+}
+.boxing-instructions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+.boxing-instructions article {
+  background: #f2f6eb;
+  border: 1px solid #e4e9db;
+  border-radius: 13px;
+  padding: 18px;
+}
+.boxing-instructions article > span {
+  font-size: 11px;
+  color: #99aa87;
+}
+.boxing-instructions h2 {
+  font-size: 15px;
+  margin: 5px 0 7px;
+}
+.boxing-instructions p {
+  font-size: 12px;
+  color: #89967d;
+  line-height: 1.7;
+  margin: 0;
+}
+.boxing-history-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: #152a2ca3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+}
+.boxing-history-dialog {
+  width: min(500px, 100%);
+  max-height: 85%;
+  overflow: auto;
+  background: #fafcf3;
+  border-radius: 17px;
+  padding: 25px;
+  color: #526a43;
+}
+.boxing-history-dialog > button {
+  float: right;
+  border: 0;
+  background: #eef2e3;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  color: #7c8e69;
+}
+.boxing-history-dialog h2 {
+  font-size: 20px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.boxing-history-dialog ol {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0;
+}
+.boxing-history-dialog li {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 0;
+  border-top: 1px solid #e0e7d4;
+}
+.boxing-history-dialog li strong {
+  font-size: 13px;
+}
+.boxing-history-dialog li span {
+  font-size: 12px;
+}
+.boxing-history-dialog time {
+  font-size: 10px;
+  color: #8f9c7f;
+}
+@media (min-width: 1600px) {
+  .boxing-stage:fullscreen .boxing-camera {
+    width: 360px;
+  }
+  .boxing-stage:fullscreen .boxing-camera-viewport {
+    height: 248px;
+  }
+  .boxing-stage:fullscreen .boxing-scoreboard {
+    width: 750px;
+  }
+}
+@media (max-width: 1050px) {
+  .boxing-game {
+    padding: 18px;
+  }
+  .boxing-camera {
+    width: 230px;
+  }
+  .boxing-camera-viewport {
+    height: 175px;
+  }
+  .boxing-scoreboard {
+    width: calc(100% - 295px);
+    gap: 8px;
+  }
+  .boxing-player-card {
+    padding: 10px;
+  }
+  .boxing-player-heading {
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+  .boxing-player-score em {
+    display: none;
+  }
+  .boxing-announcer {
+    max-width: calc(100% - 290px);
+  }
+  .boxing-source-bar > span {
+    display: none;
+  }
+}
+@media (max-width: 700px) {
+  .boxing-game {
+    padding: 13px 12px 25px;
+  }
+  .boxing-page-header > span {
+    display: none;
+  }
+  .boxing-intro {
+    padding: 25px 0 18px;
+  }
+  .boxing-intro p {
+    font-size: 11px;
+  }
+  .boxing-source-bar {
+    padding: 10px;
+    gap: 8px;
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .boxing-source-switch button {
+    flex: 1;
+    padding: 9px;
+  }
+  .boxing-source-bar label {
+    justify-content: space-between;
+  }
+  .boxing-stage {
+    height: 780px;
+    border-radius: 14px;
+  }
+  .boxing-stage:fullscreen,
+  .boxing-stage-expanded {
+    height: 100dvh;
+    border-radius: 0;
+  }
+  .boxing-stage-title {
+    left: 12px;
+    top: 13px;
+  }
+  .boxing-stage-title strong {
+    font-size: 12px;
+    letter-spacing: 2px;
+  }
+  .boxing-stage-title span {
+    font-size: 9px;
+  }
+  .boxing-expand {
+    top: 10px;
+    right: 10px;
+    width: 30px;
+    height: 30px;
+  }
+  .boxing-camera {
+    width: 158px;
+    right: 10px;
+    top: 54px;
+    padding: 6px;
+  }
+  .boxing-camera-heading {
+    gap: 4px;
+    font-size: 10px;
+    margin-bottom: 5px;
+  }
+  .boxing-camera-viewport {
+    height: 164px;
+  }
+  .boxing-camera > p {
+    font-size: 8px;
+    margin: 4px 0 0;
+  }
+  .boxing-scoreboard {
+    top: 59px;
+    left: 10px;
+    width: calc(100% - 183px);
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+  .boxing-player-2 {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .boxing-clock {
+    grid-column: 1;
+    grid-row: 3;
+    flex-direction: row;
+    justify-content: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .boxing-clock strong {
+    font-size: 20px;
+  }
+  .boxing-clock span {
+    display: none;
+  }
+  .boxing-player-card {
+    padding: 8px;
+    border-radius: 8px;
+  }
+  .boxing-player-heading {
+    font-size: 10px;
+  }
+  .boxing-player-heading b {
+    font-size: 8px;
+  }
+  .boxing-player-score {
+    margin-top: 4px;
+  }
+  .boxing-player-score strong {
+    font-size: 22px;
+  }
+  .boxing-health {
+    margin: 5px 0;
+    height: 4px;
+  }
+  .boxing-player-card > small {
+    font-size: 8px;
+  }
+  .boxing-announcer {
+    top: 306px;
+    left: 10px;
+    max-width: calc(100% - 20px);
+    font-size: 9px;
+    padding: 5px 7px;
+  }
+  .boxing-action-panels {
+    width: calc(100% - 20px);
+    bottom: 87px;
+    gap: 6px;
+  }
+  .boxing-action-panel {
+    padding: 7px;
+  }
+  .boxing-action-panel > strong {
+    flex-direction: column;
+    gap: 3px;
+    font-size: 10px;
+  }
+  .boxing-action-panel > strong span {
+    font-size: 8px;
+  }
+  .boxing-demo-buttons {
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+  .boxing-demo-buttons button {
+    min-height: 34px;
+    padding: 5px 3px;
+    font-size: 9px;
+    gap: 3px;
+  }
+  .boxing-demo-buttons button:nth-child(2) {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+  .boxing-demo-buttons button:nth-child(3) {
+    grid-row: 1;
+    grid-column: 2;
+  }
+  .boxing-action-panel > p {
+    font-size: 9px;
+  }
+  .boxing-match-controls {
+    gap: 5px;
+    bottom: 18px;
+  }
+  .boxing-match-controls button {
+    min-height: 44px;
+    font-size: 10px;
+    padding: 8px;
+    gap: 4px;
+  }
+  .boxing-start {
+    min-width: 125px;
+  }
+  .boxing-reset svg {
+    display: none;
+  }
+  .boxing-instructions {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .boxing-instructions article {
+    padding: 13px;
+  }
+  .boxing-instructions h2 {
+    font-size: 13px;
+  }
+  .boxing-instructions p {
+    font-size: 11px;
+  }
+  .boxing-result {
+    padding: 19px 16px;
+    top: 54%;
+  }
+  .boxing-result h2 {
+    font-size: 21px;
+  }
+}
+@media (max-height: 650px) and (min-width: 701px) {
+  .boxing-stage:fullscreen .boxing-camera {
+    width: 220px;
+    top: 57px;
+  }
+  .boxing-stage:fullscreen .boxing-camera-viewport {
+    height: 153px;
+  }
+  .boxing-stage:fullscreen .boxing-scoreboard {
+    top: 66px;
+  }
+  .boxing-stage:fullscreen .boxing-announcer {
+    top: 205px;
+  }
+  .boxing-stage:fullscreen .boxing-player-card {
+    padding: 8px 11px;
+  }
+  .boxing-stage:fullscreen .boxing-result {
+    padding: 15px;
+    top: 48%;
+  }
+}

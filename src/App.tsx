@@ -38,6 +38,7 @@ import {
   X,
 } from "lucide-react";
 import RideScene from "./components/RideScene";
+import BoxingGame from "./components/BoxingGame";
 import PoseCamera, { type PlayerAnalysis } from "./components/PoseCamera";
 import GameSetup from "./components/GameSetup";
 import RaceHud from "./components/RaceHud";
@@ -187,6 +188,7 @@ export default function App() {
   const [saved, setSaved] = useState(false);
   const [toast, setToast] = useState("");
   const sceneRef = useRef<HTMLDivElement>(null);
+  const returnExercise = useRef<Exclude<ExerciseMode, "boxing">>("seated");
   const audioRef = useRef<AudioContext | null>(null);
   const gainRef = useRef<GainNode | null>(null);
   const selected = routes.find((r) => r.id === route)!;
@@ -235,9 +237,13 @@ export default function App() {
   useEffect(() => {
     // Keep the preview visible from camera activation, before the first race.
     // Browsers can throttle offscreen video and stall both people's analyses.
-    if (mode === "camera" && !document.fullscreenElement)
+    if (
+      mode === "camera" &&
+      exerciseMode !== "boxing" &&
+      !document.fullscreenElement
+    )
       sceneRef.current?.scrollIntoView({ block: "start", behavior: "instant" });
-  }, [mode]);
+  }, [mode, exerciseMode]);
   const speedsRef = useRef<[number, number]>([speed, speed2]);
   speedsRef.current = [speed, speed2];
 
@@ -349,7 +355,10 @@ export default function App() {
   }, [running, mode, tracking]);
   useEffect(() => {
     const changed = () =>
-      setIsFullscreen(document.fullscreenElement === sceneRef.current);
+      setIsFullscreen(
+        !!document.fullscreenElement &&
+          document.fullscreenElement === sceneRef.current,
+      );
     document.addEventListener("fullscreenchange", changed);
     return () => document.removeEventListener("fullscreenchange", changed);
   }, []);
@@ -560,13 +569,17 @@ export default function App() {
     exerciseMode,
     onExerciseModeChange: (value: ExerciseMode) => {
       if (value === exerciseMode) return;
+      if (value === "boxing" && exerciseMode !== "boxing")
+        returnExercise.current = exerciseMode;
       changeSetup(
         () => setExerciseMode(value),
-        value === "running"
-          ? "已切換原地踏步跑步；輕鬆左右交替踏步就能前進，不必抬高膝蓋。"
-          : value === "standing"
-            ? "已切換站姿高抬膝；膝蓋抬到髖部高度才計分。"
-            : "已切換坐姿踩踏，請坐穩椅子。",
+        value === "boxing"
+          ? "雙人拳擊：面向鏡頭出拳，雙手交叉在胸前防守。"
+          : value === "running"
+            ? "已切換原地踏步跑步；輕鬆左右交替踏步就能前進，不必抬高膝蓋。"
+            : value === "standing"
+              ? "已切換站姿高抬膝；膝蓋抬到髖部高度才計分。"
+              : "已切換坐姿踩踏，請坐穩椅子。",
       );
     },
     playerCount,
@@ -586,6 +599,11 @@ export default function App() {
     },
     locked: controlsLocked,
   };
+
+  if (exerciseMode === "boxing")
+    return (
+      <BoxingGame onExit={() => setExerciseMode(returnExercise.current)} />
+    );
 
   return (
     <div className={`app-shell${largeText ? " large-text" : ""}`}>

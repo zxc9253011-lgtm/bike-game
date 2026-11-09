@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { CadenceEstimator } from "../lib/cadence";
 import { HighKneeEstimator } from "../lib/highKnee";
 import { MarchingEstimator } from "../lib/marching";
+import { BoxingEstimator, type BoxingReading } from "../lib/boxing";
 import {
   SteeringEstimator,
   type SteeringDirection,
@@ -55,6 +56,8 @@ export type PlayerAnalysis = {
   /** Completed steps for either standing exercise; seated exercise remains 0. */
   steps: number;
   steeringCue?: SteeringCue;
+  boxingGuarding?: boolean;
+  boxingPunches?: number;
 };
 
 export type PoseCameraProps = {
@@ -70,6 +73,7 @@ export type PoseCameraProps = {
   resetKey?: number;
   onSteer?: (playerIndex: 0 | 1, direction: SteeringDirection) => void;
   steeringEnabled?: boolean;
+  onBoxing?: (playerIndex: 0 | 1, reading: BoxingReading) => void;
 };
 
 let localPoseScript: Promise<PoseConstructor> | null = null;
@@ -138,7 +142,11 @@ const CONNECTIONS = [
 ];
 const JOINTS = Array.from({ length: 33 }, (_, index) => index);
 const positioningFeedback = (exerciseMode: ExerciseMode): string =>
-  exerciseMode !== "seated" ? "請讓肩膀、髖部與膝蓋入鏡" : "請讓肩膀到雙腳入鏡";
+  exerciseMode === "boxing"
+    ? "面向鏡頭，讓雙肩、手肘與雙手入鏡"
+    : exerciseMode !== "seated"
+      ? "請讓肩膀、髖部與膝蓋入鏡"
+      : "請讓肩膀到雙腳入鏡";
 const blankPlayer = (feedback = "請讓肩膀到雙腳入鏡"): PlayerAnalysis => ({
   cadence: 0,
   tracking: false,
@@ -197,16 +205,25 @@ export default function PoseCamera({
   resetKey = 0,
   onSteer,
   steeringEnabled = false,
+  onBoxing,
 }: PoseCameraProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const callbacks = useRef({ onCadence, onTracking, onPlayers, onSteer });
+  const callbacks = useRef({
+    onCadence,
+    onTracking,
+    onPlayers,
+    onSteer,
+    onBoxing,
+  });
   const live = useRef({ running, exerciseMode, steeringEnabled });
   const seated = useRef([new CadenceEstimator(), new CadenceEstimator()]);
   const standing = useRef([new HighKneeEstimator(), new HighKneeEstimator()]);
   const marching = useRef([new MarchingEstimator(), new MarchingEstimator()]);
   const steering = useRef([new SteeringEstimator(), new SteeringEstimator()]);
+  const boxing = useRef([new BoxingEstimator(), new BoxingEstimator()]);
+  const boxingTotals = useRef<[number, number]>([0, 0]);
   const analyses = useRef<[PlayerAnalysis, PlayerAnalysis]>([
     blankPlayer(positioningFeedback(exerciseMode)),
     blankPlayer(positioningFeedback(exerciseMode)),
@@ -223,7 +240,7 @@ export default function PoseCamera({
   );
   const [errorMessage, setErrorMessage] = useState("");
   const [retry, setRetry] = useState(0);
-  callbacks.current = { onCadence, onTracking, onPlayers, onSteer };
+  callbacks.current = { onCadence, onTracking, onPlayers, onSteer, onBoxing };
   live.current = { running, exerciseMode, steeringEnabled };
 
   useEffect(() => {
@@ -238,6 +255,8 @@ export default function PoseCamera({
     for (const estimator of seated.current) estimator.reset();
     for (const estimator of standing.current) estimator.reset();
     for (const estimator of marching.current) estimator.reset();
+    for (const estimator of boxing.current) estimator.reset();
+    boxingTotals.current = [0, 0];
     highKneeTotals.current = [0, 0];
     marchingTotals.current = [0, 0];
     resetAnalysis.current();
@@ -263,6 +282,11 @@ export default function PoseCamera({
     let observedVideoTime = -1;
     let lastVideoAdvanceAt = performance.now();
     let analysisStartedAt = performance.now();
+    let boxingFrameAt = 0;
+    let boxingFrame: [BoxingReading | null, BoxingReading | null] = [
+      null,
+      null,
+    ];
     let currentStatus: TrackingStatus | null = null;
     const sessions: PoseSession[] = Array.from(
       { length: playerCount },
@@ -283,6 +307,7 @@ export default function PoseCamera({
     for (const estimator of standing.current) estimator.suspend();
     for (const estimator of marching.current) estimator.suspend();
     for (const estimator of steering.current) estimator.reset();
+    for (const estimator of boxing.current) estimator.suspend();
     analyses.current = [
       {
         ...blankPlayer(positioningFeedback(live.current.exerciseMode)),
@@ -333,12 +358,36 @@ export default function PoseCamera({
             : "positioning",
         );
     };
+    const suspendBoxing = (index: 0 | 1, feedback: string, tracked = false) => {
+      boxingFrame = [null, null];
+      boxing.current[index].suspend();
+      analyses.current[index] = {
+        ...analyses.current[index],
+        boxingGuarding: false,
+        boxingPunches: boxingTotals.current[index],
+      };
+      if (live.current.exerciseMode === "boxing")
+        callbacks.current.onBoxing?.(index, {
+          tracking: tracked,
+          guarding: false,
+          punch: null,
+          punches: boxingTotals.current[index],
+          feedback,
+          quality: tracked ? analyses.current[index].quality : 0,
+        });
+    };
     pauseAnalysis.current = () => {
       if (disposed) return;
       for (const estimator of seated.current) estimator.reset();
       for (const estimator of standing.current) estimator.suspend();
       for (const estimator of marching.current) estimator.suspend();
       for (const estimator of steering.current) estimator.reset();
+      for (const session of sessions)
+        suspendBoxing(
+          session.index,
+          "已暫停",
+          analyses.current[session.index].tracking,
+        );
       analyses.current = analyses.current.map((player) => ({
         ...player,
         cadence: 0,
@@ -352,6 +401,8 @@ export default function PoseCamera({
       for (const estimator of standing.current) estimator.reset();
       for (const estimator of marching.current) estimator.reset();
       for (const estimator of steering.current) estimator.reset();
+      for (const estimator of boxing.current) estimator.reset();
+      boxingTotals.current = [0, 0];
       highKneeTotals.current = [0, 0];
       marchingTotals.current = [0, 0];
       analyses.current = analyses.current.map((player) => ({
@@ -360,13 +411,21 @@ export default function PoseCamera({
         highKnees: 0,
         steps: 0,
         feedback: player.tracking
-          ? live.current.exerciseMode === "standing"
-            ? "膝蓋抬到髖部高度"
-            : live.current.exerciseMode === "running"
-              ? "輕鬆左右踏步，不必抬高膝蓋"
-              : "請交替抬腳踩踏"
+          ? live.current.exerciseMode === "boxing"
+            ? "對空出拳攻擊，雙手交叉胸前防守"
+            : live.current.exerciseMode === "standing"
+              ? "膝蓋抬到髖部高度"
+              : live.current.exerciseMode === "running"
+                ? "輕鬆左右踏步，不必抬高膝蓋"
+                : "請交替抬腳踩踏"
           : positioningFeedback(live.current.exerciseMode),
       })) as [PlayerAnalysis, PlayerAnalysis];
+      for (const session of sessions)
+        suspendBoxing(
+          session.index,
+          analyses.current[session.index].feedback,
+          analyses.current[session.index].tracking,
+        );
       publish();
     };
     publish();
@@ -381,6 +440,7 @@ export default function PoseCamera({
       standing.current[session.index].suspend();
       marching.current[session.index].suspend();
       if (clearSteering) steering.current[session.index].reset();
+      suspendBoxing(session.index, feedback);
       if (clearPoints) session.points = undefined;
       analyses.current[session.index] = {
         ...analyses.current[session.index],
@@ -552,6 +612,58 @@ export default function PoseCamera({
         playerCount,
       );
       const ownedPoints = owned ? points : undefined;
+      if (live.current.exerciseMode === "boxing") {
+        if (!live.current.running) boxing.current[session.index].suspend();
+        const reading = boxing.current[session.index].update(
+          ownedPoints,
+          session.capturedAt,
+          session.imageAspect,
+        );
+        if (
+          !owned &&
+          points &&
+          [11, 12].every((joint) => visiblePoint(points[joint], 0.4))
+        )
+          reading.feedback = "請各站中央虛線一側，讓雙肩與雙手留在自己的區域";
+        boxingTotals.current[session.index] = reading.punches;
+        if (reading.tracking) session.health.valid();
+        else session.health.keepMotion(now);
+        session.points = ownedPoints;
+        session.held = false;
+        const activeReading = live.current.running
+          ? reading
+          : { ...reading, punch: null, guarding: false };
+        analyses.current[session.index] = {
+          cadence: 0,
+          steps: 0,
+          highKnees: 0,
+          tracking: reading.tracking,
+          quality: reading.quality,
+          feedback:
+            reading.tracking && !live.current.running
+              ? "就緒：開始後出拳／交叉防守"
+              : reading.feedback,
+          boxingGuarding: activeReading.guarding,
+          boxingPunches: reading.punches,
+        };
+        publish(true);
+        if (boxingFrameAt !== session.capturedAt) {
+          boxingFrameAt = session.capturedAt;
+          boxingFrame = [null, null];
+        }
+        boxingFrame[session.index] = activeReading;
+        // Both models analyze one frozen camera frame. Resolve that frame's
+        // attack/defence together, even when one model completes more slowly.
+        // The skeleton above still publishes each person's result immediately.
+        if (playerCount === 1) callbacks.current.onBoxing?.(0, activeReading);
+        else if (boxingFrame[0] && boxingFrame[1]) {
+          callbacks.current.onBoxing?.(0, boxingFrame[0]);
+          callbacks.current.onBoxing?.(1, boxingFrame[1]);
+          boxingFrame = [null, null];
+        }
+        queueDraw();
+        return;
+      }
       // Upper-body steering remains responsive if a knee briefly disappears.
       // It never supplies cadence or turns a neighbour into the other player.
       const estimator = steering.current[session.index];
@@ -916,6 +1028,7 @@ export default function PoseCamera({
                 // Keep the last skeleton dimmed while the deadline recovers
                 // the graph; ordinary slow, live results have a larger budget.
                 session.held = true;
+                suspendBoxing(session.index, "分析延遲，請等待辨識恢復");
                 steering.current[session.index].reset();
                 analyses.current[session.index] = {
                   ...analyses.current[session.index],
@@ -968,6 +1081,7 @@ export default function PoseCamera({
       for (const estimator of standing.current) estimator.suspend();
       for (const estimator of marching.current) estimator.suspend();
       for (const estimator of steering.current) estimator.reset();
+      for (const estimator of boxing.current) estimator.suspend();
     };
   }, [mode, playerCount, retry]);
 
@@ -1084,11 +1198,13 @@ export default function PoseCamera({
             : `${playerCount === 2 ? "雙人 " : ""}AI 動作分析`}
         </span>
         <span style={{ fontSize: 8, color: "#c4d7ba" }}>
-          {exerciseMode === "running"
-            ? "跑步・原地踏步"
-            : exerciseMode === "standing"
-              ? "站姿抬膝"
-              : "坐姿踩踏"}
+          {exerciseMode === "boxing"
+            ? "拳擊・出拳／交叉防守"
+            : exerciseMode === "running"
+              ? "跑步・原地踏步"
+              : exerciseMode === "standing"
+                ? "站姿抬膝"
+                : "坐姿踩踏"}
         </span>
       </div>
       <div
@@ -1207,6 +1323,10 @@ export default function PoseCamera({
               data-steps={players[index].steps}
               data-feedback={players[index].feedback}
               data-steering-cue={players[index].steeringCue ?? "positioning"}
+              data-boxing-guarding={
+                players[index].boxingGuarding ? "true" : "false"
+              }
+              data-boxing-punches={players[index].boxingPunches ?? 0}
               style={{
                 display: "block",
                 color: COLORS[index],
@@ -1303,9 +1423,11 @@ function DemoPose({
             ((dt * state.current.cadences[index]) / 60) * Math.PI * 2;
         const phase = phases[index];
         const standingPose = state.current.exerciseMode !== "seated";
-        const gentleMarch = state.current.exerciseMode === "running";
-        const kneeAmplitude = gentleMarch ? 14 : 78;
-        const footAmplitude = gentleMarch ? 18 : 82;
+        const boxingPose = state.current.exerciseMode === "boxing";
+        const gentleMarch =
+          state.current.exerciseMode === "running" || boxingPose;
+        const kneeAmplitude = boxingPose ? 0 : gentleMarch ? 14 : 78;
+        const footAmplitude = boxingPose ? 0 : gentleMarch ? 18 : 82;
         const centerX =
           state.current.playerCount === 2 ? 120 + index * 240 : 240;
         const horizontalScale = state.current.playerCount === 2 ? 0.85 : 1;
@@ -1357,6 +1479,11 @@ function DemoPose({
           [-47, 165],
           [47, 165],
         ];
+        if (boxingPose) {
+          points[10] = [-38, 156];
+          points[11] = [38, 156];
+          points.push([-18, 132], [18, 132]);
+        }
         if (!standingPose) {
           ctx.strokeStyle = "#bfd09d30";
           ctx.lineWidth = 5;
@@ -1409,8 +1536,8 @@ function DemoPose({
           [7, 9],
           [0, 10],
           [1, 11],
-          [10, 2],
-          [11, 3],
+          [10, boxingPose ? 12 : 2],
+          [11, boxingPose ? 13 : 3],
         ];
         ctx.strokeStyle = COLORS[index];
         ctx.shadowColor = COLORS[index];
@@ -1444,7 +1571,7 @@ function DemoPose({
       ref={canvas}
       width={480}
       height={360}
-      aria-label={`示範${playerCount === 2 ? "雙人" : "單人"}${exerciseMode === "running" ? "跑步・輕鬆原地踏步，不必抬高膝蓋" : exerciseMode === "standing" ? "站姿高抬膝" : "坐姿空中踩踏"}關節動畫，非即時攝影機影像`}
+      aria-label={`示範${playerCount === 2 ? "雙人" : "單人"}${exerciseMode === "boxing" ? "拳擊預備姿勢" : exerciseMode === "running" ? "跑步・輕鬆原地踏步，不必抬高膝蓋" : exerciseMode === "standing" ? "站姿高抬膝" : "坐姿空中踩踏"}關節動畫，非即時攝影機影像`}
       style={{
         position: "absolute",
         inset: 0,

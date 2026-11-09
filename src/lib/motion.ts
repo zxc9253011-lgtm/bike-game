@@ -98,6 +98,7 @@ export function analyzeLegPose(
   rightLift: number;
   quality: number;
 } | null {
+  if (exerciseMode === "boxing") return null;
   // Standing modes use hips and knees. A foot can be hidden while marching,
   // so ankles must not gate either high knees or gentle running in place.
   const legJoints =
