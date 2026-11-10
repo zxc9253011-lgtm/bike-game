@@ -92,13 +92,13 @@ try {
     "main",
     sourceFiles,
     root,
-    "Add two-player boxing with punch tracking, crossed-arm defence and a 3D ring",
+    "Extend boxing stamina with calibrated punch types, dodges and local Full pose model",
   );
   await publish(
     "gh-pages",
     await filesUnder(join(root, "dist-pages")),
     join(root, "dist-pages"),
-    "Publish two-player boxing arena and motion controls",
+    "Publish longer boxing matches and improved motion analysis",
   );
   console.log(
     `Website files uploaded. GitHub Pages deploys the gh-pages branch automatically.\nWebsite: ${website}`,

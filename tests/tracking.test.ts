@@ -30,6 +30,38 @@ test("fast inference retains a bounded minimum freshness budget", () => {
   assert.equal(clock.freshnessMs(), 1800);
 });
 
+test("a heavy first result gives the second model time to warm up without false recovery", () => {
+  const first = new PoseFreshness();
+  first.observe(0, 4366);
+  assert.equal(first.freshnessMs(), 6000);
+  assert.equal(
+    first.isStale(8397),
+    false,
+    "the first player stays healthy while the second model needs another 4031ms",
+  );
+  assert.equal(
+    first.isStale(10367),
+    true,
+    "startup grace still has a fixed upper bound",
+  );
+  first.observe(8400, 9000);
+  first.observe(9400, 10000);
+  for (let index = 0; index < 12; index++)
+    first.observe(10400 + index * 1000, 11000 + index * 1000);
+  assert.ok(
+    first.freshnessMs() < 2700,
+    "normal intervals replace the warm-up estimate",
+  );
+
+  const fast = new PoseFreshness();
+  fast.observe(0, 20);
+  assert.equal(
+    fast.freshnessMs(),
+    3500,
+    "fast startup keeps the original grace period",
+  );
+});
+
 test("repeated invalid pose results do not extend dropout grace", () => {
   const clock = new PoseFreshness();
   assert.equal(clock.keepMotion(100), true);

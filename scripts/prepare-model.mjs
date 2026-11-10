@@ -15,6 +15,7 @@ const integrity =
 const assets = [
   "pose.js",
   "pose_landmark_lite.tflite",
+  "pose_landmark_full.tflite",
   "pose_solution_packed_assets.data",
   "pose_solution_packed_assets_loader.js",
   "pose_solution_simd_wasm_bin.data",

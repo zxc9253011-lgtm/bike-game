@@ -8,9 +8,16 @@ export class PoseFreshness {
   lastResultAt: number | null = null;
   private lastCaptureAt: number | null = null;
   private captureInterval: number | null = null;
+  private firstResultLatency = 0;
   private invalidSince: number | null = null;
 
   observe(capturedAt: number, completedAt: number): void {
+    if (this.lastCaptureAt === null) {
+      const latency = completedAt - capturedAt;
+      this.firstResultLatency = Number.isFinite(latency)
+        ? Math.max(0, latency)
+        : 0;
+    }
     if (this.lastCaptureAt !== null && capturedAt > this.lastCaptureAt) {
       const interval = capturedAt - this.lastCaptureAt;
       this.captureInterval =
@@ -23,8 +30,13 @@ export class PoseFreshness {
   }
 
   freshnessMs(): number {
+    // The second graph can still be warming up after the first valid result.
+    // Until a real capture interval exists, use that measured startup cost.
     return this.captureInterval === null
-      ? INITIAL_FRESHNESS_MS
+      ? Math.min(
+          MAX_FRESHNESS_MS,
+          Math.max(INITIAL_FRESHNESS_MS, this.firstResultLatency * 2.5),
+        )
       : Math.min(
           MAX_FRESHNESS_MS,
           Math.max(MIN_FRESHNESS_MS, this.captureInterval * 2.5),

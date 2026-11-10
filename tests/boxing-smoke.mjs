@@ -32,6 +32,10 @@ async function stats(page) {
     elements.map((element) => ({
       score: Number(element.dataset.score),
       hp: Number(element.dataset.hp),
+      maxHp: Number(element.dataset.maxHp),
+      dodges: Number(element.dataset.dodges),
+      dodge: element.dataset.dodge || "none",
+      calibrated: element.dataset.calibrated === "true",
       guarding: element.dataset.guarding === "true",
       tracking: element.dataset.tracking === "true",
       punches: Number(element.dataset.punches),
@@ -75,6 +79,35 @@ async function pause(page) {
   await page.waitForFunction(
     () => document.querySelector(".boxing-game")?.dataset.running === "false",
   );
+}
+async function sceneAction(page, key, playerIndex, value) {
+  await page.waitForFunction(
+    ({ key, playerIndex, value }) =>
+      document
+        .querySelector('canvas[data-engine="boxing-ring"]')
+        ?.dataset[key]?.split(",")[playerIndex - 1] === value,
+    { key, playerIndex, value },
+    { timeout: 8000 },
+  );
+}
+async function demoPunch(page, index, label, type, damage) {
+  const before = await stats(page),
+    other = index === 1 ? 1 : 0;
+  await action(page, index, label).click();
+  await expectStats(
+    page,
+    before.map((fields, playerIndex) =>
+      playerIndex === index - 1
+        ? {
+            punches: fields.punches + 1,
+            hits: fields.hits + 1,
+            score: fields.score + 10,
+          }
+        : { hp: fields.hp - damage },
+    ),
+  );
+  await sceneAction(page, "punchTypes", index, type);
+  assert.equal((await stats(page))[other].hp, before[other].hp - damage);
 }
 async function withScenario(name, run, camera = false) {
   const context = await browser.newContext({
@@ -217,11 +250,11 @@ async function installCameraDouble(context) {
             region = regions[index];
           if (!state.capture) {
             let phase = null;
-            // Start the guard on a player-2-first frame. The immediately
-            // following player-1-first frame contains both a fresh attack and
-            // the now-confirmable crossed guard, whose result returns late.
+            // Prime both two-frame gesture candidates on a player-2-first
+            // capture. On the next player-1-first capture both become valid;
+            // the new guard result returns 350ms after its opponent's punch.
             if (state.fairnessProbe?.stage === "waiting" && index === 1) {
-              state.programs = ["neutral", "guard"];
+              state.programs = ["left", "guard"];
               state.fairnessProbe.stage = "priming";
               phase = "prime";
             } else if (
@@ -238,10 +271,15 @@ async function installCameraDouble(context) {
               id: ++state.captureId,
               first: index,
               phase,
-              programs: [...state.programs],
+              programs: state.programs.map((program) =>
+                program.startsWith("spike-") ? program.slice(6) : program,
+              ),
               tracked: [...state.tracked],
               used: 0,
             };
+            state.programs = state.programs.map((program) =>
+              program.startsWith("spike-") ? "neutral" : program,
+            );
           }
           const capture = state.capture;
           capture.used += 1;
@@ -275,11 +313,46 @@ async function installCameraDouble(context) {
             set(14, 0.38, 0.34, -0.22);
             set(16, 0.39, 0.31, -0.55);
           }
+          if (program === "hook-left") {
+            set(13, 0.76, 0.35, -0.1);
+            set(15, 0.49, 0.32, -0.3);
+          }
+          if (program === "hook-right") {
+            set(14, 0.24, 0.35, -0.1);
+            set(16, 0.51, 0.32, -0.3);
+          }
+          if (program === "upper-left") {
+            set(13, 0.64, 0.43, -0.15);
+            set(15, 0.61, 0.24, -0.38);
+          }
+          if (program === "upper-right") {
+            set(14, 0.36, 0.43, -0.15);
+            set(16, 0.39, 0.24, -0.38);
+          }
           if (program === "guard") {
             set(13, 0.64, 0.5, -0.02);
             set(14, 0.36, 0.5, -0.02);
             set(15, 0.43, 0.43, -0.1);
             set(16, 0.57, 0.43, -0.1);
+          }
+          if (program === "wave") {
+            set(13, 0.66, 0.29, -0.02);
+            set(14, 0.34, 0.29, -0.02);
+            set(15, 0.62, 0.17, -0.12);
+            set(16, 0.38, 0.17, -0.12);
+          }
+          if (program === "jump") {
+            for (const joint of [0, 11, 12, 13, 14, 15, 16]) {
+              points[joint].x += 0.13;
+              points[joint].y += 0.1;
+            }
+          }
+          if (["lean-left", "lean-right", "duck"].includes(program)) {
+            for (const point of points) {
+              if (point.visibility < 0.45) continue;
+              if (program === "duck") point.y += 0.065;
+              else point.x += program === "lean-left" ? 0.065 : -0.065;
+            }
           }
           const sentAt = performance.now();
           if (state.delays[index] > 0)
@@ -355,29 +428,87 @@ try {
       );
       await action(page, 1, "左拳").click();
       await expectStats(page, [
-        { score: 10, punches: 1, hits: 1, hp: 100 },
-        { hp: 90, score: 0 },
+        { score: 10, punches: 1, hits: 1, hp: 300 },
+        { hp: 294, score: 0 },
       ]);
       await action(page, 2, "交叉防守").click();
       await expectStats(page, [{}, { guarding: true }]);
       await action(page, 1, "右拳").click();
       await expectStats(page, [
         { score: 10, punches: 2 },
-        { hp: 90, score: 3, blocks: 1 },
+        { hp: 294, score: 3, blocks: 1 },
       ]);
       await action(page, 2, "交叉防守").click();
       await expectStats(page, [{}, { guarding: false }]);
       await action(page, 2, "右拳").click();
-      await expectStats(page, [{ hp: 90 }, { score: 13, punches: 1, hits: 1 }]);
+      await expectStats(page, [
+        { hp: 294 },
+        { score: 13, punches: 1, hits: 1 },
+      ]);
       await page.keyboard.down("a");
       await page.keyboard.down("a");
       await page.keyboard.up("a");
-      await expectStats(page, [{ punches: 3, score: 20 }, { hp: 80 }]);
+      await expectStats(page, [{ punches: 3, score: 20 }, { hp: 288 }]);
       await page.waitForTimeout(500);
       assert.equal(
         (await stats(page))[0].punches,
         3,
         "holding a keyboard key does not auto-repeat punches",
+      );
+      await expectStats(page, [{ maxHp: 300 }, { maxHp: 300 }]);
+      for (const index of [1, 2])
+        assert.equal(
+          await player(page, index)
+            .getByRole("progressbar")
+            .getAttribute("aria-valuemax"),
+          "300",
+        );
+      await demoPunch(page, 1, "勾拳", "hook", 8);
+      await demoPunch(page, 1, "上鉤拳", "uppercut", 10);
+      for (const [label, dodge] of [
+        ["左閃", "left"],
+        ["右閃", "right"],
+        ["下閃", "duck"],
+      ]) {
+        const before = await stats(page);
+        await action(page, 2, label).click();
+        await expectStats(page, [{}, { dodge, guarding: false }]);
+        await sceneAction(page, "dodgeState", 2, dodge);
+        await action(page, 1, "左拳").click();
+        await expectStats(page, [
+          {
+            punches: before[0].punches + 1,
+            hits: before[0].hits,
+            score: before[0].score,
+          },
+          {
+            hp: before[1].hp,
+            score: before[1].score + 3,
+            dodges: before[1].dodges + 1,
+          },
+        ]);
+        await action(page, 2, label).click();
+        await expectStats(page, [{}, { dodge: "none" }]);
+      }
+      // The former round ended after ten ordinary hits. The real new match
+      // must survive twelve landed punches without changing its engine state.
+      for (let index = 0; index < 8; index++)
+        await demoPunch(page, 1, "左拳", "straight", 6);
+      await expectStats(page, [
+        { score: 120, punches: 16, hits: 12, hp: 294 },
+        { score: 22, hp: 222, dodges: 3 },
+      ]);
+      assert.equal(
+        await page.locator(".boxing-result").count(),
+        0,
+        "higher vitality keeps a twelve-hit round running",
+      );
+      assert.ok(
+        Number(
+          await player(page, 2)
+            .getByRole("progressbar")
+            .getAttribute("aria-valuenow"),
+        ) > 0,
       );
       await pause(page);
       const frozen = await stats(page),
@@ -437,22 +568,24 @@ try {
       assert.equal(records[0].winner, 1);
       assert.deepEqual(
         records[0].scores,
-        [20, 13],
+        [120, 22],
         "actual game scores are saved",
       );
       assert.deepEqual(
         records[0].hp,
-        [90, 80],
+        [294, 222],
         "actual remaining vitality is saved",
       );
-      assert.deepEqual(records[0].punches, [3, 1]);
-      assert.deepEqual(records[0].hits, [2, 1]);
+      assert.equal(records[0].maxHp, 300);
+      assert.deepEqual(records[0].punches, [16, 1]);
+      assert.deepEqual(records[0].hits, [12, 1]);
       assert.deepEqual(records[0].blocks, [0, 1]);
+      assert.deepEqual(records[0].dodges, [0, 3]);
       assert.equal(records[0].reason, "manual");
       await page.getByRole("button", { name: "重新一局", exact: true }).click();
       await expectStats(page, [
-        { hp: 100, score: 0, punches: 0 },
-        { hp: 100, score: 0, punches: 0 },
+        { hp: 300, maxHp: 300, score: 0, punches: 0, dodges: 0 },
+        { hp: 300, maxHp: 300, score: 0, punches: 0, dodges: 0 },
       ]);
       assert.equal(await page.locator(".boxing-result").count(), 0);
       assert.equal(
@@ -499,6 +632,9 @@ try {
       "camera",
       async (page) => {
         await page
+          .getByRole("combobox", { name: "拳擊回合時間", exact: true })
+          .selectOption("120");
+        await page
           .getByRole("button", { name: "使用攝影機", exact: true })
           .click();
         await sampled(page, {});
@@ -513,7 +649,10 @@ try {
           tracked: [true, true],
           programs: ["neutral", "neutral"],
         });
-        await expectStats(page, [{ tracking: true }, { tracking: true }]);
+        await expectStats(page, [
+          { tracking: true, calibrated: true },
+          { tracking: true, calibrated: true },
+        ]);
         await page.evaluate(() => {
           window.__boxingFullscreen = {
             video: document.querySelector(".pose-video"),
@@ -556,10 +695,26 @@ try {
         await page.evaluate(() => document.exitFullscreen());
         await start(page);
         await sampled(page, { programs: ["neutral", "neutral"] });
+        const quietStart = await stats(page);
+        for (const programs of [
+          ["spike-left", "spike-right"],
+          ["spike-jump", "neutral"],
+          ["wave", "wave"],
+        ]) {
+          await sampled(page, { programs }, 7);
+          const observed = await stats(page);
+          assert.deepEqual(
+            observed.map(({ tracking, calibrated, ...fields }) => fields),
+            quietStart.map(({ tracking, calibrated, ...fields }) => fields),
+            "single-frame pose spikes and overhead waving do not fabricate combat",
+          );
+        }
+        await sampled(page, { programs: ["neutral", "neutral"] }, 6);
+        await expectStats(page, [{ calibrated: true }, { calibrated: true }]);
         await sampled(page, { programs: ["left", "neutral"] });
         await expectStats(page, [
           { punches: 1, hits: 1, score: 10 },
-          { hp: 90 },
+          { hp: 294 },
         ]);
         await page.waitForFunction(
           () =>
@@ -583,20 +738,20 @@ try {
         await sampled(page, { programs: ["right", "guard"] });
         await expectStats(page, [
           { punches: 2, score: 10 },
-          { hp: 90, blocks: 1, score: 3 },
+          { hp: 294, blocks: 1, score: 3 },
         ]);
         await sampled(page, { programs: ["guard", "neutral"] });
         await expectStats(page, [{ guarding: true }, { guarding: false }]);
         await sampled(page, { programs: ["guard", "right"] });
         await expectStats(page, [
-          { hp: 100, blocks: 1, score: 13 },
+          { hp: 300, blocks: 1, score: 13 },
           { punches: 1, score: 3 },
         ]);
         await sampled(page, { programs: ["neutral", "neutral"] });
         await sampled(page, { programs: ["left", "left"] });
         await expectStats(page, [
-          { hp: 90, score: 23, hits: 2, punches: 3 },
-          { hp: 80, score: 13, hits: 1, punches: 2 },
+          { hp: 294, score: 23, hits: 2, punches: 3 },
+          { hp: 288, score: 13, hits: 1, punches: 2 },
         ]);
         await sampled(page, { programs: ["neutral", "neutral"] });
         const beforeDelayedGuard = await stats(page);
@@ -638,10 +793,78 @@ try {
             300,
           "the opponent's same-frame guard really returned after the attack result",
         );
-        await sampled(page, {
-          delays: [0, 0],
-          programs: ["neutral", "neutral"],
-        });
+        await sampled(
+          page,
+          {
+            delays: [0, 0],
+            programs: ["neutral", "neutral"],
+          },
+          6,
+        );
+        for (const [index, program, type, damage] of [
+          [1, "hook-left", "hook", 8],
+          [2, "upper-right", "uppercut", 10],
+        ]) {
+          const before = await stats(page);
+          const programs = ["neutral", "neutral"];
+          programs[index - 1] = program;
+          await sampled(page, { programs });
+          await expectStats(
+            page,
+            before.map((fields, playerIndex) =>
+              playerIndex === index - 1
+                ? {
+                    punches: fields.punches + 1,
+                    hits: fields.hits + 1,
+                    score: fields.score + 10,
+                  }
+                : { hp: fields.hp - damage },
+            ),
+          );
+          await sceneAction(page, "punchTypes", index, type);
+          await sampled(page, { programs: ["neutral", "neutral"] }, 6);
+        }
+        for (const [index, program, dodge] of [
+          [2, "lean-left", "left"],
+          [2, "lean-right", "right"],
+          [2, "duck", "duck"],
+          [1, "lean-left", "left"],
+        ]) {
+          const before = await stats(page),
+            attacker = index === 1 ? 2 : 1;
+          const programs = ["neutral", "neutral"];
+          programs[index - 1] = program;
+          await sampled(page, { programs }, 5);
+          await expectStats(
+            page,
+            programs.map((_, playerIndex) =>
+              playerIndex === index - 1
+                ? { dodge, guarding: false }
+                : { dodge: "none" },
+            ),
+          );
+          await sceneAction(page, "dodgeState", index, dodge);
+          programs[attacker - 1] = attacker === 1 ? "left" : "right";
+          await sampled(page, { programs });
+          await expectStats(
+            page,
+            before.map((fields, playerIndex) =>
+              playerIndex === index - 1
+                ? {
+                    hp: fields.hp,
+                    dodges: fields.dodges + 1,
+                    score: fields.score + 3,
+                  }
+                : {
+                    punches: fields.punches + 1,
+                    hits: fields.hits,
+                    score: fields.score,
+                  },
+            ),
+          );
+          await sampled(page, { programs: ["neutral", "neutral"] }, 6);
+          await expectStats(page, [{ dodge: "none" }, { dodge: "none" }]);
+        }
         await sampled(page, {
           tracked: [true, false],
           programs: ["neutral", "guard"],
@@ -671,8 +894,8 @@ try {
         );
         const afterPause = await stats(page);
         assert.deepEqual(
-          afterPause.map(({ tracking, ...fields }) => fields),
-          paused.map(({ tracking, ...fields }) => fields),
+          afterPause.map(({ tracking, calibrated, ...fields }) => fields),
+          paused.map(({ tracking, calibrated, ...fields }) => fields),
           "paused camera poses never queue attacks or hold defense",
         );
         await expectStats(page, [{ guarding: false }, { guarding: false }]);

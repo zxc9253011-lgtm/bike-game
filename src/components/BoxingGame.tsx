@@ -21,21 +21,37 @@ import {
   advanceBoxingMatch,
   createBoxingMatch,
   finishBoxingMatch,
+  MAX_BOXING_HP,
   type BoxingAction,
   type BoxingMatch,
   type BoxingReading,
   type BoxingSide,
+  type BoxingPunchType,
+  type BoxingDodge,
 } from "../lib/boxing";
 import "./boxing-game.css";
 
 type Source = "demo" | "camera";
 type Pair<T> = [T, T];
+type PendingAttack = { side: BoxingSide; type: BoxingPunchType };
+const punchNames: Record<BoxingPunchType, string> = {
+  straight: "直拳",
+  hook: "勾拳",
+  uppercut: "上鉤拳",
+};
+const dodgeNames: Record<Exclude<BoxingDodge, null>, string> = {
+  left: "左閃",
+  right: "右閃",
+  duck: "下閃",
+};
 type BoxingRecord = {
   date: string;
   seconds: number;
   duration: number;
   scores: Pair<number>;
   hp: Pair<number>;
+  maxHp?: number;
+  dodges?: Pair<number>;
   punches: Pair<number>;
   hits: Pair<number>;
   blocks: Pair<number>;
@@ -50,12 +66,17 @@ const emptyReading = (): BoxingReading => ({
   punches: 0,
   feedback: "請讓肩膀、手肘與雙手入鏡",
   quality: 0,
+  calibrated: false,
+  dodge: null,
 });
 const idleActor = (): BoxingScenePlayer => ({
   guarding: false,
   punchId: 0,
   punchSide: null,
   hitId: 0,
+  punchType: "straight",
+  dodge: null,
+  dodgeId: 0,
 });
 const winnerText = (winner: 1 | 2 | "tie") =>
   winner === "tie" ? "兩位玩家平手！" : `玩家 ${winner} 獲勝`;
@@ -78,6 +99,17 @@ function readHistory(): BoxingRecord[] {
               Number.isFinite(record.seconds) &&
               record.seconds >= 0 &&
               [1, 2, "tie"].includes(record.winner) &&
+              (record.maxHp === undefined ||
+                (Number.isFinite(record.maxHp) && record.maxHp > 0)) &&
+              (record.dodges === undefined ||
+                (Array.isArray(record.dodges) &&
+                  record.dodges.length === 2 &&
+                  record.dodges.every(
+                    (value: unknown) =>
+                      typeof value === "number" &&
+                      Number.isFinite(value) &&
+                      value >= 0,
+                  ))) &&
               [
                 record.scores,
                 record.hp,
@@ -105,6 +137,9 @@ function readHistory(): BoxingRecord[] {
 
 export default function BoxingGame({ onExit }: { onExit: () => void }) {
   const [source, setSource] = useState<Source>("demo");
+  const [trackingQuality, setTrackingQuality] = useState<"accurate" | "fast">(
+    "accurate",
+  );
   const [duration, setDuration] = useState(60);
   const [match, setMatch] = useState(() => createBoxingMatch(60));
   const [running, setRunning] = useState(false);
@@ -114,6 +149,7 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
     emptyReading(),
   ]);
   const [demoGuards, setDemoGuards] = useState<Pair<boolean>>([false, false]);
+  const [demoDodges, setDemoDodges] = useState<Pair<BoxingDodge>>([null, null]);
   const [resetKey, setResetKey] = useState(0);
   const [cameraStatus, setCameraStatus] = useState("demo");
   const [fullscreen, setFullscreen] = useState(false);
@@ -133,7 +169,8 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
   const lastSeen = useRef<Pair<number>>([0, 0]);
   const freshness = useRef<Pair<number>>([3500, 3500]);
   const guardsRef = useRef<Pair<boolean>>([false, false]);
-  const pending = useRef<Pair<BoxingSide | null>>([null, null]);
+  const dodgesRef = useRef<Pair<BoxingDodge>>([null, null]);
+  const pending = useRef<Pair<PendingAttack | null>>([null, null]);
   const actorsRef = useRef<Pair<BoxingScenePlayer>>([idleActor(), idleActor()]);
   const saved = useRef(false);
   const noop = useCallback(() => undefined, []);
@@ -141,10 +178,14 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
     pending.current = [null, null];
     guardsRef.current = [false, false];
     setDemoGuards([false, false]);
+    dodgesRef.current = [null, null];
+    setDemoDodges([null, null]);
     readingRef.current = readingRef.current.map((reading) => ({
       ...reading,
       guarding: false,
+      dodge: null,
       punch: null,
+      punchType: undefined,
     })) as Pair<BoxingReading>;
     setReadings(readingRef.current);
   }, []);
@@ -166,7 +207,12 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
           if (exchange.punches[player]) {
             actorsRef.current[player].punchId += 1;
             actorsRef.current[player].punchSide = exchange.punches[player];
+            actorsRef.current[player].punchType =
+              exchange.punchTypes?.[player] ?? "straight";
           }
+          if (exchange.dodged?.[player === 0 ? 1 : 0])
+            actorsRef.current[player].dodgeId =
+              (actorsRef.current[player].dodgeId ?? 0) + 1;
           if (exchange.landed[player === 0 ? 1 : 0])
             actorsRef.current[player].hitId += 1;
         }
@@ -189,15 +235,30 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
     lastSeen.current[player] = now;
     const live = {
       ...reading,
-      guarding: runningRef.current && reading.tracking && reading.guarding,
-      punch: runningRef.current && reading.tracking ? reading.punch : null,
+      guarding:
+        runningRef.current &&
+        reading.tracking &&
+        reading.calibrated === true &&
+        reading.guarding,
+      dodge:
+        runningRef.current && reading.tracking && reading.calibrated === true
+          ? (reading.dodge ?? null)
+          : null,
+      punch:
+        runningRef.current && reading.tracking && reading.calibrated === true
+          ? reading.punch
+          : null,
     };
     readingRef.current = [...readingRef.current] as Pair<BoxingReading>;
     readingRef.current[player] = live;
     setReadings(readingRef.current);
-    if (!live.tracking) pending.current = [null, null];
+    if (!live.tracking || live.calibrated !== true)
+      pending.current = [null, null];
     else if (live.punch && runningRef.current)
-      pending.current[player] = live.punch;
+      pending.current[player] = {
+        side: live.punch,
+        type: live.punchType ?? "straight",
+      };
   }, []);
   const onPlayers = useCallback((players: Pair<PlayerAnalysis>) => {
     if (sourceRef.current !== "camera") return;
@@ -208,7 +269,9 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
         next[player] = {
           ...next[player],
           tracking: false,
+          calibrated: false,
           guarding: false,
+          dodge: null,
           punch: null,
           feedback: players[player].feedback,
         };
@@ -241,7 +304,9 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
             freshReadings[player] = {
               ...freshReadings[player],
               tracking: false,
+              calibrated: false,
               guarding: false,
+              dodge: null,
               punch: null,
               feedback: "分析暫停，請讓肩膀與雙手清楚入鏡",
             };
@@ -258,6 +323,7 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
         const valid =
           sourceRef.current === "demo" ||
           (readingRef.current[player].tracking &&
+            readingRef.current[player].calibrated === true &&
             now - lastSeen.current[player] <= freshness.current[player]);
         return {
           tracked: valid,
@@ -266,7 +332,13 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
             (sourceRef.current === "demo"
               ? guardsRef.current[player]
               : readingRef.current[player].guarding),
-          punch: valid ? pending.current[player] : null,
+          dodge: valid
+            ? sourceRef.current === "demo"
+              ? dodgesRef.current[player]
+              : (readingRef.current[player].dodge ?? null)
+            : null,
+          punch: valid ? (pending.current[player]?.side ?? null) : null,
+          punchType: valid ? pending.current[player]?.type : undefined,
         };
       }) as Pair<BoxingAction>;
       pending.current = [null, null];
@@ -287,6 +359,7 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
           readingRef.current.every(
             (reading, player) =>
               reading.tracking &&
+              reading.calibrated === true &&
               performance.now() - lastSeen.current[player] <=
                 freshness.current[player],
           );
@@ -294,7 +367,8 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
           clearActions();
           runningRef.current = true;
           setRunning(true);
-        } else setNotice("請讓兩位玩家的肩膀、手肘與雙手入鏡，再開始。");
+        } else
+          setNotice("請讓兩位玩家上半身入鏡，身體自然回正完成校準後再開始。");
       }
     }, 1000);
     return () => window.clearTimeout(timeout);
@@ -314,6 +388,8 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
       duration: match.duration,
       scores: [...match.scores],
       hp: [...match.hp],
+      maxHp: match.maxHp ?? MAX_BOXING_HP,
+      dodges: [...match.dodges],
       punches: [...match.punches],
       hits: [...match.hits],
       blocks: [...match.blocks],
@@ -344,21 +420,42 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  const punch = useCallback((player: 0 | 1, side: BoxingSide) => {
-    if (
-      sourceRef.current !== "demo" ||
-      !runningRef.current ||
-      guardsRef.current[player]
-    )
-      return;
-    pending.current[player] = side;
-  }, []);
+  const punch = useCallback(
+    (player: 0 | 1, side: BoxingSide, type: BoxingPunchType = "straight") => {
+      if (
+        sourceRef.current !== "demo" ||
+        !runningRef.current ||
+        guardsRef.current[player] ||
+        dodgesRef.current[player] !== null
+      )
+        return;
+      pending.current[player] = { side, type };
+    },
+    [],
+  );
   const guard = useCallback((player: 0 | 1, value: boolean) => {
     if (sourceRef.current !== "demo" || !runningRef.current) return;
     guardsRef.current = [...guardsRef.current] as Pair<boolean>;
     guardsRef.current[player] = value;
     setDemoGuards(guardsRef.current);
-    if (value) pending.current[player] = null;
+    if (value) {
+      pending.current[player] = null;
+      dodgesRef.current = [...dodgesRef.current] as Pair<BoxingDodge>;
+      dodgesRef.current[player] = null;
+      setDemoDodges(dodgesRef.current);
+    }
+  }, []);
+  const dodge = useCallback((player: 0 | 1, value: BoxingDodge) => {
+    if (sourceRef.current !== "demo" || !runningRef.current) return;
+    dodgesRef.current = [...dodgesRef.current] as Pair<BoxingDodge>;
+    dodgesRef.current[player] = value;
+    setDemoDodges(dodgesRef.current);
+    if (value) {
+      pending.current[player] = null;
+      guardsRef.current = [...guardsRef.current] as Pair<boolean>;
+      guardsRef.current[player] = false;
+      setDemoGuards(guardsRef.current);
+    }
   }, []);
   useEffect(() => {
     const keys: Record<string, [0 | 1, BoxingSide]> = {
@@ -366,6 +463,14 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
       d: [0, "right"],
       j: [1, "left"],
       l: [1, "right"],
+    };
+    const dodgeKeys: Record<string, [0 | 1, Exclude<BoxingDodge, null>]> = {
+      q: [0, "left"],
+      e: [0, "right"],
+      w: [0, "duck"],
+      u: [1, "left"],
+      o: [1, "right"],
+      i: [1, "duck"],
     };
     const keydown = (event: KeyboardEvent) => {
       if (
@@ -379,20 +484,29 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
       )
         return;
       const key = event.key.toLowerCase();
-      if (!(key in keys) && key !== "s" && key !== "k") return;
+      if (!(key in keys) && !(key in dodgeKeys) && key !== "s" && key !== "k")
+        return;
       event.preventDefault();
       if (event.repeat) return;
       if (key === "s" || key === "k") guard(key === "s" ? 0 : 1, true);
+      else if (key in dodgeKeys) dodge(...dodgeKeys[key]);
       else punch(...keys[key]);
     };
     const keyup = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
       if (key === "s" || key === "k") guard(key === "s" ? 0 : 1, false);
+      else if (
+        key in dodgeKeys &&
+        dodgesRef.current[dodgeKeys[key][0]] === dodgeKeys[key][1]
+      )
+        dodge(dodgeKeys[key][0], null);
     };
     const blur = () => {
       pending.current = [null, null];
       guardsRef.current = [false, false];
       setDemoGuards([false, false]);
+      dodgesRef.current = [null, null];
+      setDemoDodges([null, null]);
     };
     window.addEventListener("keydown", keydown);
     window.addEventListener("keyup", keyup);
@@ -402,7 +516,7 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
       window.removeEventListener("keyup", keyup);
       window.removeEventListener("blur", blur);
     };
-  }, [punch, guard, historyOpen]);
+  }, [punch, guard, dodge, historyOpen]);
   useEffect(() => {
     if (historyOpen) stop();
   }, [historyOpen, stop]);
@@ -440,6 +554,7 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
     readings.every(
       (reading, player) =>
         reading.tracking &&
+        reading.calibrated === true &&
         performance.now() - lastSeen.current[player] <=
           freshness.current[player],
     );
@@ -451,7 +566,11 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
     }
     if (match.result) resetRound();
     if (!canStart) {
-      setNotice("請讓兩位玩家各站鏡頭一側，肩膀到雙手完整入鏡。");
+      setNotice(
+        readings.every((reading) => reading.tracking)
+          ? "兩位請自然回正，稍微穩定一下完成校準。"
+          : "請讓兩位玩家各站鏡頭一側，肩膀到雙手完整入鏡。",
+      );
       return;
     }
     clearActions();
@@ -478,16 +597,32 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
         ? demoGuards[player]
         : readings[player].tracking && readings[player].guarding),
   ) as Pair<boolean>;
+  const activeDodges: Pair<BoxingDodge> = ([0, 1] as const).map((player) =>
+    running
+      ? source === "demo"
+        ? demoDodges[player]
+        : readings[player].tracking && readings[player].calibrated === true
+          ? (readings[player].dodge ?? null)
+          : null
+      : null,
+  ) as Pair<BoxingDodge>;
   const actors: Pair<BoxingScenePlayer> = actorsRef.current.map(
-    (actor, index) => ({ ...actor, guarding: activeGuards[index] }),
+    (actor, index) => ({
+      ...actor,
+      guarding: activeGuards[index],
+      dodge: activeDodges[index],
+    }),
   ) as Pair<BoxingScenePlayer>;
   const remaining = Math.max(0, match.duration - match.elapsed);
   const lastExchange = match.lastExchange;
-  const actionMessage = lastExchange?.blocked.some(Boolean)
-    ? "交叉防守成功！抓住出拳與防守的節奏。"
-    : lastExchange?.landed.some(Boolean)
-      ? "漂亮出拳！收回手，準備下一次。"
-      : "出拳攻擊 · 雙手交叉在胸前防守";
+  const lastPunchName = lastExchange?.punchTypes?.find((type) => !!type);
+  const actionMessage = lastExchange?.dodged?.some(Boolean)
+    ? "閃避成功！回到正中，準備下一個動作。"
+    : lastExchange?.blocked.some(Boolean)
+      ? "交叉防守成功！抓住出拳與防守的節奏。"
+      : lastExchange?.landed.some(Boolean)
+        ? `漂亮${punchNames[lastPunchName ?? "straight"]}！收回手，準備下一次。`
+        : "直拳／勾拳／上鉤拳攻擊 · 交叉防守 · 微側傾或稍微降低上身閃避";
 
   return (
     <main
@@ -527,7 +662,8 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
         <span>面向鏡頭，一起上場</span>
         <h1>雙人拳擊比賽</h1>
         <p>
-          你們在原地對空出拳，角色在擂台面對面交手。雙手交叉在胸前，就能擋下對方的攻擊。
+          300
+          點活力，慢慢掌握攻防節奏。直拳、勾拳、上鉤拳有不同反應；雙手交叉防守，微側傾或稍微降低上身可閃避。
         </p>
       </div>
       <section className="boxing-source-bar" aria-label="拳擊遊戲設定">
@@ -579,7 +715,26 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
             ))}
           </select>
         </label>
-        <span>雙人同場 · 原地活動 · 上半身辨識</span>
+        <label className="boxing-quality-field">
+          辨識模式
+          <select
+            aria-label="拳擊辨識模式"
+            value={trackingQuality}
+            disabled={locked}
+            onChange={(event) => {
+              setTrackingQuality(event.target.value as "accurate" | "fast");
+              resetRound();
+            }}
+          >
+            <option value="accurate">精準辨識</option>
+            <option value="fast">流暢反應</option>
+          </select>
+        </label>
+        <span>
+          {trackingQuality === "accurate"
+            ? "精準辨識 · 光線清楚效果較好"
+            : "較快反應 · 適合較慢的電腦"}
+        </span>
       </section>
 
       <section
@@ -615,6 +770,12 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
               data-boxing-player={player + 1}
               data-score={match.scores[player]}
               data-hp={match.hp[player]}
+              data-max-hp={match.maxHp ?? MAX_BOXING_HP}
+              data-dodges={match.dodges[player]}
+              data-dodge={activeDodges[player] ?? "none"}
+              data-calibrated={
+                source === "demo" || readings[player].calibrated === true
+              }
               data-guarding={activeGuards[player]}
               data-tracking={source === "demo" || readings[player].tracking}
               data-punches={match.punches[player]}
@@ -627,7 +788,14 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
                   玩家 {player + 1}
                 </span>
                 <b>
-                  {activeGuards[player] ? (
+                  {source === "camera" && !readings[player].tracking ? (
+                    "待入鏡"
+                  ) : source === "camera" &&
+                    readings[player].calibrated !== true ? (
+                    "回正校準中"
+                  ) : activeDodges[player] ? (
+                    dodgeNames[activeDodges[player]]
+                  ) : activeGuards[player] ? (
                     <>
                       <ShieldCheck size={13} />
                       防守中
@@ -640,21 +808,27 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
               <div className="boxing-player-score">
                 <strong>{match.scores[player]}</strong>
                 <span>分</span>
-                <em>活力 {match.hp[player]} / 100</em>
+                <em>
+                  活力 {match.hp[player]} / {match.maxHp ?? MAX_BOXING_HP}
+                </em>
               </div>
               <div
                 className="boxing-health"
                 role="progressbar"
                 aria-label={`玩家 ${player + 1} 活力`}
                 aria-valuemin={0}
-                aria-valuemax={100}
+                aria-valuemax={match.maxHp ?? MAX_BOXING_HP}
                 aria-valuenow={match.hp[player]}
               >
-                <span style={{ width: `${match.hp[player]}%` }} />
+                <span
+                  style={{
+                    width: `${(match.hp[player] / (match.maxHp ?? MAX_BOXING_HP)) * 100}%`,
+                  }}
+                />
               </div>
               <small>
                 出拳 {match.punches[player]} · 命中 {match.hits[player]} · 擋下{" "}
-                {match.blocks[player]}
+                {match.blocks[player]} · 閃避 {match.dodges[player]}
               </small>
             </div>
           ))}
@@ -686,6 +860,7 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
               demoCadence2={0}
               playerCount={2}
               exerciseMode="boxing"
+              poseQuality={trackingQuality}
               resetKey={resetKey}
               onCadence={noop}
               onTracking={setCameraStatus}
@@ -696,13 +871,13 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
           <p>
             {source === "demo"
               ? "示範標點，請用下方按鈕試玩"
-              : "兩人分站鏡頭中線兩側，拍到肩膀與雙手"}
+              : "先各站中線一側、自然回正一下，拍到肩膀與雙手"}
           </p>
         </aside>
         <div className="boxing-announcer" role="status">
           {notice ||
             (countdown !== null
-              ? "兩位回正、放鬆雙手，準備上場"
+              ? "兩位身體回正、手自然放胸前，準備上場"
               : match.result
                 ? "謝謝兩位的精彩對決"
                 : actionMessage)}
@@ -722,9 +897,13 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
                         ? "A / D 出拳 · 按住 S 防守"
                         : "J / L 出拳 · 按住 K 防守"
                       : readings[player].tracking
-                        ? activeGuards[player]
-                          ? "交叉防守中"
-                          : "上半身已辨識"
+                        ? readings[player].calibrated !== true
+                          ? "回正一下，正在校準"
+                          : activeDodges[player]
+                            ? dodgeNames[activeDodges[player]]
+                            : activeGuards[player]
+                              ? "交叉防守中"
+                              : "已校準，可以出拳"
                         : "請調整入鏡位置"}
                   </span>
                 </strong>
@@ -732,7 +911,11 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
                   <div className="boxing-demo-buttons">
                     <button
                       aria-label={`玩家 ${player + 1} 左拳`}
-                      disabled={!running || activeGuards[player]}
+                      disabled={
+                        !running ||
+                        activeGuards[player] ||
+                        activeDodges[player] !== null
+                      }
                       onClick={() => punch(player, "left")}
                     >
                       <Hand size={15} />
@@ -749,15 +932,70 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
                     </button>
                     <button
                       aria-label={`玩家 ${player + 1} 右拳`}
-                      disabled={!running || activeGuards[player]}
+                      disabled={
+                        !running ||
+                        activeGuards[player] ||
+                        activeDodges[player] !== null
+                      }
                       onClick={() => punch(player, "right")}
                     >
                       <Hand size={15} />
                       右拳
                     </button>
+                    <button
+                      className="boxing-special-punch"
+                      aria-label={`玩家 ${player + 1} 勾拳`}
+                      disabled={
+                        !running ||
+                        activeGuards[player] ||
+                        activeDodges[player] !== null
+                      }
+                      onClick={() => punch(player, "left", "hook")}
+                    >
+                      勾拳
+                    </button>
+                    <button
+                      className="boxing-special-punch"
+                      aria-label={`玩家 ${player + 1} 上鉤拳`}
+                      disabled={
+                        !running ||
+                        activeGuards[player] ||
+                        activeDodges[player] !== null
+                      }
+                      onClick={() => punch(player, "right", "uppercut")}
+                    >
+                      上鉤拳
+                    </button>
+                    {(["left", "right", "duck"] as const).map((direction) => (
+                      <button
+                        key={direction}
+                        aria-label={`玩家 ${player + 1} ${dodgeNames[direction]}`}
+                        aria-pressed={activeDodges[player] === direction}
+                        disabled={!running}
+                        onClick={() =>
+                          dodge(
+                            player,
+                            dodgesRef.current[player] === direction
+                              ? null
+                              : direction,
+                          )
+                        }
+                      >
+                        {dodgeNames[direction]}
+                      </button>
+                    ))}
                   </div>
                 ) : (
-                  <p>{readings[player].feedback}</p>
+                  <div className="boxing-camera-feedback">
+                    <p>{readings[player].feedback}</p>
+                    <small data-boxing-quality={player + 1}>
+                      {readings[player].tracking
+                        ? readings[player].calibrated === true
+                          ? `校準完成 · 標點清晰度 ${readings[player].quality}%`
+                          : "身體自然回正，穩定一下完成校準"
+                        : "等待上半身入鏡"}
+                    </small>
+                  </div>
                 )}
               </div>
             ))}
@@ -824,7 +1062,7 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
                   <b>玩家 {player + 1}</b>
                   <span>
                     出拳 {match.punches[player]} · 命中 {match.hits[player]} ·
-                    擋下 {match.blocks[player]}
+                    擋下 {match.blocks[player]} · 閃避 {match.dodges[player]}
                   </span>
                 </p>
               ))}
@@ -865,6 +1103,11 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
                         {record.scores[0]} : {record.scores[1]} 分 ·{" "}
                         {Math.round(record.seconds)} 秒
                       </span>
+                      <span>
+                        活力 {record.hp[0]} : {record.hp[1]} /{" "}
+                        {record.maxHp ?? 100} · 閃避 {record.dodges?.[0] ?? 0} :{" "}
+                        {record.dodges?.[1] ?? 0}
+                      </span>
                       <time dateTime={record.date}>
                         {new Date(record.date).toLocaleString("zh-TW")}
                       </time>
@@ -880,20 +1123,24 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
         <article>
           <span>01</span>
           <h2>面向鏡頭</h2>
-          <p>兩人分站畫面左右，肩膀、手肘與雙手入鏡。坐姿或站姿都能參加。</p>
+          <p>
+            兩人分站畫面左右，肩膀、手肘與雙手入鏡。先自然回正、手放胸前，穩定一下完成各自校準，坐姿或站姿都能參加。
+          </p>
         </article>
         <article>
           <span>02</span>
           <h2>出拳攻擊</h2>
           <p>
-            在原地對空向前出拳，再收回手。一次有效出拳算一次攻擊，命中得 10 分。
+            向前伸拳是直拳；屈肘向側前方揮拳是勾拳；拳頭從較低的胸前往上送是上鉤拳。每次收回手再出拳，命中得
+            10 分；不必追求速度或幅度。
           </p>
         </article>
         <article>
           <span>03</span>
-          <h2>交叉雙手防守</h2>
+          <h2>防守與閃避</h2>
           <p>
-            雙手在胸前交叉，可擋下對方的出拳。成功防守得 3 分，時間到比得分。
+            雙手在胸前交叉防守；上身微向左／右傾或稍微降低上身可閃避，不用跳躍或深蹲。回正後可換下一個動作，成功防守／閃避各得
+            3 分，時間到比得分。
           </p>
         </article>
       </section>

@@ -15,6 +15,7 @@
     "pose_solution_simd_wasm_bin.wasm": "195a929430e2ce130b3efb82e64ba27c8e68cb0f6bad870b715688060ea6f7e2",
     "pose_solution_wasm_bin.js": "3fcfd9574a04fcf4a0b9271b9b4429c6b9a70278300a5e54c45ddf2001e41422",
     "pose_solution_wasm_bin.wasm": "a5589369289e1f1e007c106e8ffb26e85a5be762c6db9551ed36213f8f58378d",
-    "pose_web.binarypb": "dc8efd1c2d62007b34278467407fda5f70847f41310e0e39f0f59fc17b1d01f7"
+    "pose_web.binarypb": "dc8efd1c2d62007b34278467407fda5f70847f41310e0e39f0f59fc17b1d01f7",
+    "pose_landmark_full.tflite": "e9a5c5cb17f736fafd4c2ec1da3b3d331d6edbe8a0d32395855aeb2cdfd64b9f"
   }
 }

@@ -58,6 +58,8 @@ export type PlayerAnalysis = {
   steeringCue?: SteeringCue;
   boxingGuarding?: boolean;
   boxingPunches?: number;
+  boxingCalibrated?: boolean;
+  boxingDodge?: "left" | "right" | "duck" | null;
 };
 
 export type PoseCameraProps = {
@@ -74,6 +76,7 @@ export type PoseCameraProps = {
   onSteer?: (playerIndex: 0 | 1, direction: SteeringDirection) => void;
   steeringEnabled?: boolean;
   onBoxing?: (playerIndex: 0 | 1, reading: BoxingReading) => void;
+  poseQuality?: "accurate" | "fast";
 };
 
 let localPoseScript: Promise<PoseConstructor> | null = null;
@@ -206,6 +209,7 @@ export default function PoseCamera({
   onSteer,
   steeringEnabled = false,
   onBoxing,
+  poseQuality = "fast",
 }: PoseCameraProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -365,6 +369,8 @@ export default function PoseCamera({
         ...analyses.current[index],
         boxingGuarding: false,
         boxingPunches: boxingTotals.current[index],
+        boxingCalibrated: false,
+        boxingDodge: null,
       };
       if (live.current.exerciseMode === "boxing")
         callbacks.current.onBoxing?.(index, {
@@ -372,6 +378,8 @@ export default function PoseCamera({
           guarding: false,
           punch: null,
           punches: boxingTotals.current[index],
+          calibrated: false,
+          dodge: null,
           feedback,
           quality: tracked ? analyses.current[index].quality : 0,
         });
@@ -613,11 +621,11 @@ export default function PoseCamera({
       );
       const ownedPoints = owned ? points : undefined;
       if (live.current.exerciseMode === "boxing") {
-        if (!live.current.running) boxing.current[session.index].suspend();
         const reading = boxing.current[session.index].update(
           ownedPoints,
           session.capturedAt,
           session.imageAspect,
+          { active: live.current.running },
         );
         if (
           !owned &&
@@ -632,7 +640,7 @@ export default function PoseCamera({
         session.held = false;
         const activeReading = live.current.running
           ? reading
-          : { ...reading, punch: null, guarding: false };
+          : { ...reading, punch: null, guarding: false, dodge: null };
         analyses.current[session.index] = {
           cadence: 0,
           steps: 0,
@@ -640,11 +648,13 @@ export default function PoseCamera({
           tracking: reading.tracking,
           quality: reading.quality,
           feedback:
-            reading.tracking && !live.current.running
-              ? "就緒：開始後出拳／交叉防守"
+            reading.tracking && reading.calibrated && !live.current.running
+              ? "校準完成：出拳、交叉防守或微側身閃避"
               : reading.feedback,
           boxingGuarding: activeReading.guarding,
           boxingPunches: reading.punches,
+          boxingCalibrated: reading.calibrated,
+          boxingDodge: activeReading.dodge,
         };
         publish(true);
         if (boxingFrameAt !== session.capturedAt) {
@@ -788,7 +798,7 @@ export default function PoseCamera({
         });
         session.model = model;
         model.setOptions({
-          modelComplexity: 0,
+          modelComplexity: poseQuality === "accurate" ? 1 : 0,
           smoothLandmarks: true,
           enableSegmentation: false,
           minDetectionConfidence: 0.5,
@@ -1083,7 +1093,7 @@ export default function PoseCamera({
       for (const estimator of steering.current) estimator.reset();
       for (const estimator of boxing.current) estimator.suspend();
     };
-  }, [mode, playerCount, retry]);
+  }, [mode, playerCount, retry, poseQuality]);
 
   return (
     <div
@@ -1091,6 +1101,7 @@ export default function PoseCamera({
       className={`pose-camera pose-camera--${mode}`}
       data-player-count={playerCount}
       data-exercise-mode={exerciseMode}
+      data-pose-quality={poseQuality}
       style={{
         position: "relative",
         width: "100%",
@@ -1199,7 +1210,7 @@ export default function PoseCamera({
         </span>
         <span style={{ fontSize: 8, color: "#c4d7ba" }}>
           {exerciseMode === "boxing"
-            ? "拳擊・出拳／交叉防守"
+            ? "拳擊・攻擊／防守／閃避"
             : exerciseMode === "running"
               ? "跑步・原地踏步"
               : exerciseMode === "standing"
@@ -1327,6 +1338,10 @@ export default function PoseCamera({
                 players[index].boxingGuarding ? "true" : "false"
               }
               data-boxing-punches={players[index].boxingPunches ?? 0}
+              data-boxing-calibrated={
+                players[index].boxingCalibrated ? "true" : "false"
+              }
+              data-boxing-dodge={players[index].boxingDodge ?? "none"}
               style={{
                 display: "block",
                 color: COLORS[index],

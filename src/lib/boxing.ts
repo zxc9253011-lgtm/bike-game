@@ -1,24 +1,38 @@
 import type { PosePoint } from "./motion";
 
 export type BoxingSide = "left" | "right";
+export type BoxingPunchType = "straight" | "hook" | "uppercut";
+export type BoxingDodge = "left" | "right" | "duck" | null;
+export const MAX_BOXING_HP = 300;
+export const BOXING_DAMAGE: Record<BoxingPunchType, number> = {
+  straight: 6,
+  hook: 8,
+  uppercut: 10,
+};
 export type BoxingReading = {
   tracking: boolean;
   guarding: boolean;
   /** A fresh event, never a continuously held posture. */
   punch: BoxingSide | null;
+  punchType?: BoxingPunchType;
+  dodge?: BoxingDodge;
+  calibrated?: boolean;
   punches: number;
   feedback: string;
   quality: number;
 };
-
+export type BoxingUpdateOptions = { active?: boolean };
 const ARM_JOINTS = [
   [11, 13, 15],
   [12, 14, 16],
 ] as const;
 const GUARD_CONFIRM_MS = 100;
 const GUARD_RELEASE_MS = 90;
+const CALIBRATION_MS = 200;
+const PUNCH_CONFIRM_MS = 60;
+const DODGE_CONFIRM_MS = 150;
 const MAX_FRAME_GAP_MS = 3000;
-const PUNCH_COOLDOWN_MS = 220;
+const PUNCH_COOLDOWN_MS = 260;
 
 function visible(point: PosePoint | undefined): point is PosePoint {
   return (
@@ -41,18 +55,31 @@ type ArmGeometry = {
   reach: number;
   planarReach: number;
   depth: number | null;
+  wristX: number;
   wristY: number;
+  elbowX: number;
 };
+type Candidate = { type: BoxingPunchType; since: number; frames: number };
 type ArmHistory = {
   armed: boolean;
   neutral: ArmGeometry | null;
+  candidate: Candidate | null;
   lastPunchAt: number;
 };
 const freshArm = (): ArmHistory => ({
   armed: false,
   neutral: null,
+  candidate: null,
   lastPunchAt: -Infinity,
 });
+type BodyPose = {
+  x: number;
+  y: number;
+  width: number;
+  torso: number;
+  headY: number | null;
+};
+type BodyBaseline = BodyPose & { since: number; frames: number };
 
 function armGeometry(
   points: PosePoint[],
@@ -70,10 +97,10 @@ function armGeometry(
     a.y - b.y,
     hasDepth ? ((a.z ?? 0) - (b.z ?? 0)) * aspect : 0,
   ];
-  const upper = vector(shoulder, elbow);
-  const lower = vector(wrist, elbow);
-  const upperLength = Math.hypot(...upper);
-  const lowerLength = Math.hypot(...lower);
+  const upper = vector(shoulder, elbow),
+    lower = vector(wrist, elbow);
+  const upperLength = Math.hypot(...upper),
+    lowerLength = Math.hypot(...lower);
   if (upperLength < 0.015 || lowerLength < 0.015) return null;
   const cosine =
     upper.reduce((sum, value, index) => sum + value * lower[index], 0) /
@@ -86,21 +113,33 @@ function armGeometry(
       wrist.y - shoulder.y,
     ),
     depth: hasDepth ? ((shoulder.z ?? 0) - (wrist.z ?? 0)) * aspect : null,
-    wristY: wrist.y,
+    wristX: (wrist.x - shoulder.x) * aspect,
+    wristY: wrist.y - shoulder.y,
+    elbowX: (elbow.x - shoulder.x) * aspect,
   };
 }
 
 /**
- * Upper-body air boxing. A bent/retracted arm must be observed before a
- * changing extension can attack. Depth detects a fist moving toward the
- * camera; horizontal image-plane extension is a fallback. Legs are unused.
+ * Upper-body air boxing. Body calibration is separate from arm retraction.
+ * Relative joint changes plus two coherent samples reject one-frame jumps;
+ * each person owns their own body baseline, arms, defence and event history.
  */
 export class BoxingEstimator {
   private arms: [ArmHistory, ArmHistory] = [freshArm(), freshArm()];
   private lastFrameAt: number | null = null;
+  private previousBody: BodyPose | null = null;
+  private baseline: BodyBaseline | null = null;
+  private calibrated = false;
   private guardSince: number | null = null;
   private guardReleaseSince: number | null = null;
   private guarding = false;
+  private dodging: BoxingDodge = null;
+  private dodgeCandidate: {
+    value: Exclude<BoxingDodge, null>;
+    since: number;
+    frames: number;
+  } | null = null;
+  private dodgeReleaseSince: number | null = null;
   private punches = 0;
 
   reset(): void {
@@ -108,35 +147,47 @@ export class BoxingEstimator {
     this.suspend();
   }
 
-  /** Tracking loss / pause clears posture history while preserving totals. */
+  /** Loss/pause requires a new stable posture; completed exercise totals stay. */
   suspend(): void {
     this.arms = [freshArm(), freshArm()];
     this.lastFrameAt = null;
-    this.guardSince = null;
-    this.guardReleaseSince = null;
+    this.previousBody = null;
+    this.baseline = null;
+    this.calibrated = false;
+    this.guardSince = this.guardReleaseSince = null;
     this.guarding = false;
+    this.dodging = null;
+    this.dodgeCandidate = null;
+    this.dodgeReleaseSince = null;
   }
 
   update(
     points: PosePoint[] | undefined,
     timeMs: number,
     imageAspect = 1,
+    options: BoxingUpdateOptions = {},
   ): BoxingReading {
+    const active = options.active !== false;
     const reading = (
       tracking: boolean,
       punch: BoxingSide | null,
       feedback: string,
       quality = 0,
+      punchType?: BoxingPunchType,
     ): BoxingReading => ({
       tracking,
-      guarding: tracking && this.guarding,
+      guarding: tracking && active && this.calibrated && this.guarding,
+      dodge: tracking && active && this.calibrated ? this.dodging : null,
+      calibrated: tracking && this.calibrated,
       punch,
+      punchType,
       punches: this.punches,
       feedback,
       quality,
     });
     if (
       !Number.isFinite(timeMs) ||
+      timeMs < 0 ||
       !points ||
       ![11, 12].every((joint) => visible(points[joint]))
     ) {
@@ -160,22 +211,28 @@ export class BoxingEstimator {
       Number.isFinite(imageAspect) && imageAspect > 0 ? imageAspect : 1;
     const shoulderY = (points[11].y + points[12].y) / 2;
     const shoulderX = (points[11].x + points[12].x) / 2;
-    const shoulderWidth = Math.hypot(
+    const width = Math.hypot(
       (points[11].x - points[12].x) * aspect,
       points[11].y - points[12].y,
     );
-    if (shoulderWidth < 0.06) {
+    if (width < 0.06) {
       this.suspend();
       return reading(false, null, "請面向鏡頭，讓雙肩清楚入鏡");
     }
-    const visibleHips = [23, 24].every((joint) => visible(points[joint]));
-    const measuredTorso = visibleHips
+    const hipsVisible = [23, 24].every((joint) => visible(points[joint]));
+    const measuredTorso = hipsVisible
       ? (points[23].y + points[24].y) / 2 - shoulderY
       : 0;
-    const torso =
-      measuredTorso >= shoulderWidth * 0.7 && measuredTorso <= shoulderWidth * 3
-        ? measuredTorso
-        : shoulderWidth * 1.5;
+    const body: BodyPose = {
+      x: shoulderX * aspect,
+      y: shoulderY,
+      width,
+      torso:
+        measuredTorso >= width * 0.7 && measuredTorso <= width * 3
+          ? measuredTorso
+          : width * 1.5,
+      headY: visible(points[0]) ? points[0].y : null,
+    };
     const geometry = [
       armGeometry(points, 0, aspect),
       armGeometry(points, 1, aspect),
@@ -195,25 +252,68 @@ export class BoxingEstimator {
         validJoints.length) *
         100,
     );
+    // A model/person jump or abrupt camera-scale change must not become a hit
+    // or a duck. Recalibrate before accepting further gestures.
+    if (
+      this.previousBody &&
+      (Math.hypot(body.x - this.previousBody.x, body.y - this.previousBody.y) >
+        this.previousBody.torso * 0.65 ||
+        Math.abs(body.width / this.previousBody.width - 1) > 0.22)
+    ) {
+      this.suspend();
+      this.lastFrameAt = timeMs;
+      this.previousBody = body;
+      this.baseline = { ...body, since: timeMs, frames: 1 };
+      return reading(true, null, "位置變動較大，請回正並保持一下", quality);
+    }
+    this.previousBody = body;
+    if (!this.baseline) this.baseline = { ...body, since: timeMs, frames: 1 };
+    else if (!this.calibrated) {
+      const stable =
+        Math.hypot(body.x - this.baseline.x, body.y - this.baseline.y) <=
+          this.baseline.torso * 0.04 &&
+        Math.abs(body.width / this.baseline.width - 1) <= 0.08;
+      if (!stable) this.baseline = { ...body, since: timeMs, frames: 1 };
+      else {
+        this.baseline.frames += 1;
+        if (
+          timeMs - this.baseline.since >= CALIBRATION_MS &&
+          this.baseline.frames >= 2
+        )
+          this.calibrated = true;
+      }
+    }
+    // Waiting players may move to a new comfortable neutral position. It must
+    // become stable before Start is enabled; active play never follows a dodge.
+    if (
+      !active &&
+      this.calibrated &&
+      this.baseline &&
+      (Math.hypot(body.x - this.baseline.x, body.y - this.baseline.y) >
+        this.baseline.torso * 0.08 ||
+        Math.abs(body.width / this.baseline.width - 1) > 0.12)
+    ) {
+      this.calibrated = false;
+      this.baseline = { ...body, since: timeMs, frames: 1 };
+    }
+    const baseline = this.baseline;
+    // Keep a single calibrated scale when hips briefly disappear.
+    const torso = baseline.torso;
     const bothArms = geometry.every(Boolean);
     const orientation = Math.sign(points[11].x - points[12].x) || 1;
-    const wristsCrossed =
-      bothArms &&
-      (points[16].x - points[15].x) * aspect * orientation >=
-        shoulderWidth * 0.05;
-    const inChest = (joint: number) =>
-      points[joint].y >= shoulderY + torso * 0.06 &&
-      points[joint].y <= shoulderY + torso * 0.85 &&
-      Math.abs(points[joint].x - shoulderX) * aspect <= shoulderWidth * 0.85;
     const crossed =
-      wristsCrossed &&
-      inChest(15) &&
-      inChest(16) &&
+      bothArms &&
+      (points[16].x - points[15].x) * aspect * orientation >= width * 0.05 &&
+      (points[15].x - shoulderX) * aspect * orientation <= -width * 0.035 &&
+      (points[16].x - shoulderX) * aspect * orientation >= width * 0.035 &&
+      [15, 16].every(
+        (joint) =>
+          points[joint].y >= shoulderY + torso * 0.06 &&
+          points[joint].y <= shoulderY + torso * 0.85 &&
+          Math.abs(points[joint].x - shoulderX) * aspect <= width * 0.85,
+      ) &&
       geometry.every((arm) => arm!.angle < 145);
-
     if (!bothArms) {
-      // One clearly visible arm may punch, but an occluded hand cannot hold
-      // imaginary cross-arm defence through a partial detection.
       this.guardSince = this.guardReleaseSince = null;
       this.guarding = false;
     } else if (crossed) {
@@ -224,30 +324,125 @@ export class BoxingEstimator {
       this.guardSince = null;
       if (this.guarding) {
         this.guardReleaseSince ??= timeMs;
-        if (timeMs - this.guardReleaseSince >= GUARD_RELEASE_MS) {
+        if (timeMs - this.guardReleaseSince >= GUARD_RELEASE_MS)
           this.guarding = false;
-          this.guardReleaseSince = null;
-        }
       }
     }
-    if (crossed || this.guarding) {
-      for (const arm of this.arms) {
-        arm.armed = false;
-        arm.neutral = null;
+    if (!active) {
+      this.dodging = null;
+      this.dodgeCandidate = null;
+      for (const side of [0, 1] as const) {
+        const arm = geometry[side];
+        this.arms[side].candidate = null;
+        if (
+          !crossed &&
+          arm &&
+          arm.angle <= 115 &&
+          arm.reach <= torso * 0.85 &&
+          (arm.depth === null || arm.depth <= torso * 0.7)
+        ) {
+          this.arms[side].armed = true;
+          this.arms[side].neutral = { ...arm };
+        } else {
+          this.arms[side].armed = false;
+          this.arms[side].neutral = null;
+        }
       }
       return reading(
         true,
         null,
-        this.guarding ? "交叉防守中" : "雙手交叉在胸前，保持一下即可防守",
+        this.calibrated
+          ? "校準完成：出拳、交叉防守或輕靠閃避"
+          : "請回正身體，保持一下完成校準",
+        quality,
+      );
+    }
+    if (!this.calibrated)
+      return reading(true, null, "請回正身體，保持一下完成校準", quality);
+    if (crossed || this.guarding) {
+      for (const arm of this.arms) {
+        arm.armed = false;
+        arm.neutral = null;
+        arm.candidate = null;
+      }
+      this.dodging = null;
+      this.dodgeCandidate = null;
+      return reading(
+        true,
+        null,
+        this.guarding ? "交叉防守中" : "交叉雙手，保持一下即可防守",
         quality,
       );
     }
 
-    const candidates: Array<{ side: 0 | 1; strength: number }> = [];
+    const dx = (body.x - baseline.x) / torso;
+    const dy = (body.y - baseline.y) / torso;
+    const scaleStable = Math.abs(body.width / baseline.width - 1) <= 0.12;
+    const headFollows =
+      body.headY === null ||
+      baseline.headY === null ||
+      Math.abs(body.headY - baseline.headY - (body.y - baseline.y)) / torso <=
+        0.18;
+    const dodgeSignal: BoxingDodge = !scaleStable
+      ? null
+      : dy >= 0.16 && headFollows
+        ? "duck"
+        : Math.abs(dx) >= 0.16
+          ? dx > 0
+            ? "left"
+            : "right"
+          : null;
+    const releasedDodge =
+      !scaleStable || (Math.abs(dx) <= 0.075 && dy <= 0.075);
+    if (this.dodging) {
+      if (releasedDodge) {
+        this.dodgeReleaseSince ??= timeMs;
+        if (timeMs - this.dodgeReleaseSince >= 90) {
+          this.dodging = null;
+          this.dodgeReleaseSince = null;
+          this.dodgeCandidate = null;
+        }
+      } else this.dodgeReleaseSince = null;
+    } else if (dodgeSignal) {
+      if (this.dodgeCandidate?.value !== dodgeSignal)
+        this.dodgeCandidate = { value: dodgeSignal, since: timeMs, frames: 1 };
+      else {
+        this.dodgeCandidate.frames += 1;
+        if (
+          timeMs - this.dodgeCandidate.since >= DODGE_CONFIRM_MS &&
+          this.dodgeCandidate.frames >= 2
+        ) {
+          this.dodging = dodgeSignal;
+          this.dodgeCandidate = null;
+        }
+      }
+    } else this.dodgeCandidate = null;
+    if (this.dodging || dodgeSignal) {
+      for (const arm of this.arms) {
+        arm.armed = false;
+        arm.neutral = null;
+        arm.candidate = null;
+      }
+      return reading(
+        true,
+        null,
+        this.dodging === "duck"
+          ? "輕蹲閃避中，回正後再出拳"
+          : this.dodging
+            ? `${this.dodging === "left" ? "左" : "右"}側閃避中，回正後再出拳`
+            : "保持輕靠／微蹲姿勢，準備閃避",
+        quality,
+      );
+    }
+    const candidates: Array<{
+      side: 0 | 1;
+      type: BoxingPunchType;
+      strength: number;
+    }> = [];
     for (const side of [0, 1] as const) {
-      const arm = geometry[side];
-      const history = this.arms[side];
-      if (!arm) {
+      const arm = geometry[side],
+        history = this.arms[side];
+      if (!arm || arm.reach > torso * 3) {
         this.arms[side] = freshArm();
         continue;
       }
@@ -257,70 +452,142 @@ export class BoxingEstimator {
       ) {
         history.armed = false;
         history.neutral = null;
+        history.candidate = null;
       }
-      // A relaxed/bent arm establishes a real return position. A straight
-      // arm held at startup, arm swing, or overhead wave cannot arm itself.
-      if (arm.angle <= 115 && arm.reach <= torso * 1.35) {
+      const nearPreviousNeutral =
+        !history.neutral ||
+        (Math.abs(arm.reach - history.neutral.reach) <= torso * 0.12 &&
+          Math.abs(arm.wristX - history.neutral.wristX) <= torso * 0.16 &&
+          Math.abs(arm.wristY - history.neutral.wristY) <= torso * 0.16 &&
+          (arm.depth === null ||
+            history.neutral.depth === null ||
+            Math.abs(arm.depth - history.neutral.depth) <= torso * 0.12));
+      const retracted =
+        nearPreviousNeutral &&
+        arm.angle <= 115 &&
+        arm.reach <= torso * 0.85 &&
+        (arm.depth === null || arm.depth <= torso * 0.7);
+      if (retracted) {
+        // Freeze an armed return position. Following every small bent-arm
+        // change would chase a slow hook/uppercut and erase its trajectory.
+        if (!history.armed || !history.neutral) history.neutral = { ...arm };
         history.armed = true;
-        history.neutral = { ...arm };
+        history.candidate = null;
         continue;
       }
-      const inPunchBand =
-        arm.wristY >= shoulderY - torso * 0.25 &&
-        arm.wristY <= shoulderY + torso * 0.75;
-      if (!inPunchBand) {
-        if (arm.angle >= 125) {
+      if (!history.armed || !history.neutral) continue;
+      const neutral = history.neutral;
+      const up = (neutral.wristY - arm.wristY) / torso;
+      const reachChange = (arm.reach - neutral.reach) / torso;
+      const planarChange = (arm.planarReach - neutral.planarReach) / torso;
+      const forwardChange =
+        arm.depth !== null && neutral.depth !== null
+          ? (arm.depth - neutral.depth) / torso
+          : 0;
+      const inward =
+        (-(arm.wristX - neutral.wristX) *
+          (side === 0 ? orientation : -orientation)) /
+        torso;
+      const elbowOut =
+        (arm.elbowX * (side === 0 ? orientation : -orientation)) / torso;
+      let type: BoxingPunchType | null = null;
+      if (arm.wristY >= -torso * 0.4 && arm.wristY <= torso * 0.75) {
+        if (
+          arm.angle >= 50 &&
+          arm.angle <= 145 &&
+          arm.wristY <= torso * 0.05 &&
+          up >= 0.28 &&
+          forwardChange >= 0.3 &&
+          reachChange >= 0.2
+        )
+          type = "uppercut";
+        else if (
+          arm.angle >= 35 &&
+          arm.angle <= 125 &&
+          inward >= 0.25 &&
+          elbowOut >= 0.25 &&
+          forwardChange >= 0.22 &&
+          reachChange >= 0.15
+        )
+          type = "hook";
+        else if (
+          arm.angle >= 125 &&
+          arm.angle - neutral.angle >= 18 &&
+          ((forwardChange >= 0.22 && reachChange >= 0.15) ||
+            (planarChange >= 0.3 &&
+              arm.planarReach >= torso * 0.85 &&
+              arm.angle >= 140 &&
+              (arm.depth === null || forwardChange >= -0.05)))
+        )
+          type = "straight";
+      }
+      if (!type) {
+        history.candidate = null;
+        if (
+          arm.wristY < -torso * 0.4 ||
+          (arm.depth !== null && arm.depth < -torso * 0.1)
+        ) {
           history.armed = false;
           history.neutral = null;
         }
         continue;
       }
+      if (history.candidate?.type !== type)
+        history.candidate = { type, since: timeMs, frames: 1 };
+      else history.candidate.frames += 1;
+      if (timeMs - history.candidate.since > MAX_FRAME_GAP_MS) {
+        history.armed = false;
+        history.neutral = null;
+        history.candidate = null;
+        continue;
+      }
       if (
-        !history.armed ||
-        !history.neutral ||
-        arm.angle < 125 ||
-        arm.angle - history.neutral.angle < 18 ||
+        history.candidate.frames < 2 ||
+        timeMs - history.candidate.since < PUNCH_CONFIRM_MS ||
         timeMs - history.lastPunchAt < PUNCH_COOLDOWN_MS
       )
         continue;
-      const reachChange = (arm.reach - history.neutral.reach) / torso;
-      const planarReachChange =
-        (arm.planarReach - history.neutral.planarReach) / torso;
-      const forwardChange =
-        arm.depth !== null && history.neutral.depth !== null
-          ? (arm.depth - history.neutral.depth) / torso
-          : 0;
-      const forward = forwardChange >= 0.22 && reachChange >= 0.15;
-      const imagePlane =
-        planarReachChange >= 0.3 &&
-        arm.planarReach >= torso * 0.85 &&
-        arm.angle >= 140;
-      if (!forward && !imagePlane) continue;
       history.armed = false;
+      history.candidate = null;
       history.lastPunchAt = timeMs;
-      candidates.push({ side, strength: Math.max(reachChange, forwardChange) });
+      candidates.push({
+        side,
+        type,
+        strength: Math.max(reachChange, forwardChange, inward),
+      });
     }
     if (candidates.length > 0) {
-      // Two fists thrust together are one game attack; consume both postures
-      // now so the second held fist cannot become a delayed duplicate hit.
       candidates.sort((a, b) => b.strength - a.strength);
-      const punch = candidates[0].side === 0 ? "left" : "right";
+      const event = candidates[0];
+      for (const candidate of candidates) {
+        this.arms[candidate.side].armed = false;
+        this.arms[candidate.side].candidate = null;
+      }
       this.punches += 1;
+      const typeName =
+        event.type === "straight"
+          ? "直拳"
+          : event.type === "hook"
+            ? "勾拳"
+            : "上鉤拳";
       return reading(
         true,
-        punch,
-        `${punch === "left" ? "左" : "右"}拳攻擊，收回胸前後再出拳`,
+        event.side === 0 ? "left" : "right",
+        `${event.side === 0 ? "左" : "右"}${typeName}攻擊，收回胸前後再出拳`,
         quality,
+        event.type,
       );
     }
     return reading(
       true,
       null,
-      this.arms.some((arm) => !arm.armed && Number.isFinite(arm.lastPunchAt))
-        ? "拳頭收回胸前後，再次出拳"
-        : this.arms.some((arm) => arm.armed)
-          ? "準備完成：向鏡頭出拳，交叉雙手可防守"
-          : "雙手自然放在胸前，屈肘後向鏡頭出拳",
+      this.arms.some((arm) => arm.candidate)
+        ? "已偵測出拳方向，保持動作完成判定"
+        : this.arms.some(
+              (arm) => !arm.armed && Number.isFinite(arm.lastPunchAt),
+            )
+          ? "拳頭收回胸前後，再次出拳"
+          : "校準完成：直拳、勾拳、上鉤拳或輕靠閃避",
       quality,
     );
   }
@@ -328,7 +595,9 @@ export class BoxingEstimator {
 
 export type BoxingAction = {
   punch?: BoxingSide | null;
+  punchType?: BoxingPunchType;
   guarding: boolean;
+  dodge?: BoxingDodge;
   tracked?: boolean;
 };
 export type BoxingResult = {
@@ -340,22 +609,25 @@ export type BoxingExchange = {
   id: number;
   at: number;
   punches: [BoxingSide | null, BoxingSide | null];
+  punchTypes: [BoxingPunchType | null, BoxingPunchType | null];
   landed: [boolean, boolean];
   blocked: [boolean, boolean];
+  dodged: [boolean, boolean];
 };
 export type BoxingMatch = {
   duration: number;
   elapsed: number;
+  maxHp: number;
   hp: [number, number];
   scores: [number, number];
   hits: [number, number];
   blocks: [number, number];
+  dodges: [number, number];
   punches: [number, number];
   exchange: number;
   lastExchange: BoxingExchange | null;
   result: BoxingResult | null;
 };
-
 export function createBoxingMatch(durationSeconds = 60): BoxingMatch {
   return {
     duration:
@@ -363,17 +635,18 @@ export function createBoxingMatch(durationSeconds = 60): BoxingMatch {
         ? durationSeconds
         : 60,
     elapsed: 0,
-    hp: [100, 100],
+    maxHp: MAX_BOXING_HP,
+    hp: [MAX_BOXING_HP, MAX_BOXING_HP],
     scores: [0, 0],
     hits: [0, 0],
     blocks: [0, 0],
+    dodges: [0, 0],
     punches: [0, 0],
     exchange: 0,
     lastExchange: null,
     result: null,
   };
 }
-
 function winner(state: BoxingMatch): 1 | 2 | "tie" {
   if (state.hp[0] <= 0 && state.hp[1] <= 0) return "tie";
   if (state.hp[0] <= 0) return 2;
@@ -384,7 +657,6 @@ function winner(state: BoxingMatch): 1 | 2 | "tie" {
       ? 1
       : 2;
 }
-
 export function finishBoxingMatch(state: BoxingMatch): BoxingMatch {
   return state.result
     ? state
@@ -397,8 +669,10 @@ export function finishBoxingMatch(state: BoxingMatch): BoxingMatch {
         },
       };
 }
-
-/** Both attacks use the same pre-exchange guard/health state; no first-player bias. */
+function validDodge(value: BoxingDodge | undefined): boolean {
+  return value === "left" || value === "right" || value === "duck";
+}
+/** Both attacks use one pre-exchange snapshot; no first-player advantage. */
 export function resolveBoxingExchange(
   state: BoxingMatch,
   actions: [BoxingAction, BoxingAction],
@@ -410,22 +684,33 @@ export function resolveBoxingExchange(
   )
     return state;
   const punches = actions.map((action) =>
-    !action.guarding && (action.punch === "left" || action.punch === "right")
+    !action.guarding &&
+    !validDodge(action.dodge) &&
+    (action.punch === "left" || action.punch === "right")
       ? action.punch
       : null,
   ) as [BoxingSide | null, BoxingSide | null];
   if (!punches.some(Boolean)) return state;
+  const punchTypes = actions.map((action, index) =>
+    punches[index]
+      ? action.punchType && Object.hasOwn(BOXING_DAMAGE, action.punchType)
+        ? action.punchType
+        : "straight"
+      : null,
+  ) as [BoxingPunchType | null, BoxingPunchType | null];
   const next: BoxingMatch = {
     ...state,
     hp: [...state.hp],
     scores: [...state.scores],
     hits: [...state.hits],
     blocks: [...state.blocks],
+    dodges: [...state.dodges],
     punches: [...state.punches],
     exchange: state.exchange + 1,
   };
-  const landed: [boolean, boolean] = [false, false];
-  const blocked: [boolean, boolean] = [false, false];
+  const landed: [boolean, boolean] = [false, false],
+    blocked: [boolean, boolean] = [false, false],
+    dodged: [boolean, boolean] = [false, false];
   for (const attacker of [0, 1] as const) {
     if (!punches[attacker]) continue;
     const defender = attacker === 0 ? 1 : 0;
@@ -434,19 +719,28 @@ export function resolveBoxingExchange(
       blocked[attacker] = true;
       next.blocks[defender] += 1;
       next.scores[defender] += 3;
+    } else if (validDodge(actions[defender].dodge)) {
+      dodged[attacker] = true;
+      next.dodges[defender] += 1;
+      next.scores[defender] += 3;
     } else {
       landed[attacker] = true;
       next.hits[attacker] += 1;
       next.scores[attacker] += 10;
-      next.hp[defender] = Math.max(0, next.hp[defender] - 10);
+      next.hp[defender] = Math.max(
+        0,
+        next.hp[defender] - BOXING_DAMAGE[punchTypes[attacker]!],
+      );
     }
   }
   next.lastExchange = {
     id: next.exchange,
     at: next.elapsed,
     punches,
+    punchTypes,
     landed,
     blocked,
+    dodged,
   };
   if (next.hp.some((hp) => hp <= 0))
     next.result = {
@@ -456,8 +750,7 @@ export function resolveBoxingExchange(
     };
   return next;
 }
-
-/** Events are at the end of a time step; the gong wins at exact expiry. */
+/** The gong takes precedence over events arriving at exact expiry. */
 export function advanceBoxingMatch(
   state: BoxingMatch,
   dtSeconds: number,
@@ -467,8 +760,8 @@ export function advanceBoxingMatch(
     return state;
   if (dtSeconds === 0)
     return actions ? resolveBoxingExchange(state, actions) : state;
-  const elapsed = Math.min(state.duration, state.elapsed + dtSeconds);
-  const next = { ...state, elapsed };
+  const elapsed = Math.min(state.duration, state.elapsed + dtSeconds),
+    next = { ...state, elapsed };
   if (elapsed >= state.duration)
     return {
       ...next,

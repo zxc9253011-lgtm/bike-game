@@ -74,6 +74,7 @@
   border-radius: 13px;
   padding: 13px 17px;
   margin-bottom: 18px;
+  flex-wrap: wrap;
 }
 .boxing-source-switch {
   display: flex;
@@ -365,8 +366,25 @@
 }
 .boxing-demo-buttons {
   display: grid;
-  grid-template-columns: 1fr 1.3fr 1fr;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 5px;
+}
+.boxing-demo-buttons > button {
+  grid-column: span 2;
+}
+.boxing-demo-buttons > .boxing-special-punch {
+  grid-column: span 3;
+}
+.boxing-camera-feedback > p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.boxing-camera-feedback > small {
+  display: block;
+  margin-top: 4px;
+  font-size: 9px;
+  opacity: 0.85;
 }
 .boxing-demo-buttons button {
   border: 1px solid #dfe7d5;
@@ -763,7 +781,7 @@
     font-size: 8px;
   }
   .boxing-demo-buttons {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 4px;
   }
   .boxing-demo-buttons button {
@@ -772,13 +790,16 @@
     font-size: 9px;
     gap: 3px;
   }
-  .boxing-demo-buttons button:nth-child(2) {
-    grid-row: 2;
-    grid-column: 1 / -1;
-  }
+  .boxing-demo-buttons button:nth-child(2),
   .boxing-demo-buttons button:nth-child(3) {
-    grid-row: 1;
-    grid-column: 2;
+    grid-row: auto;
+    grid-column: span 2;
+  }
+  .boxing-camera-feedback > p {
+    font-size: 9px;
+  }
+  .boxing-camera-feedback > small {
+    font-size: 8px;
   }
   .boxing-action-panel > p {
     font-size: 9px;
