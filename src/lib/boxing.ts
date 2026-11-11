@@ -32,7 +32,7 @@ const CALIBRATION_MS = 200;
 const PUNCH_CONFIRM_MS = 60;
 const DODGE_CONFIRM_MS = 150;
 const MAX_FRAME_GAP_MS = 3000;
-const PUNCH_COOLDOWN_MS = 260;
+const PUNCH_COOLDOWN_MS = 180;
 
 function visible(point: PosePoint | undefined): point is PosePoint {
   return (
@@ -58,19 +58,36 @@ type ArmGeometry = {
   wristX: number;
   wristY: number;
   elbowX: number;
+  elbowY: number;
+  elbowDepth: number | null;
+  confidence: number;
+  forearmLength: number;
 };
-type Candidate = { type: BoxingPunchType; since: number; frames: number };
+type Candidate = {
+  type: BoxingPunchType;
+  since: number;
+  frames: number;
+  peak: ArmGeometry;
+  strength: number;
+  coherent: boolean;
+  allowPulse: boolean;
+  last: ArmGeometry;
+  lastAt: number;
+  steadySince: number;
+};
 type ArmHistory = {
   armed: boolean;
   neutral: ArmGeometry | null;
   candidate: Candidate | null;
   lastPunchAt: number;
+  lastNeutralAt: number;
 };
 const freshArm = (): ArmHistory => ({
   armed: false,
   neutral: null,
   candidate: null,
   lastPunchAt: -Infinity,
+  lastNeutralAt: -Infinity,
 });
 type BodyPose = {
   x: number;
@@ -116,12 +133,157 @@ function armGeometry(
     wristX: (wrist.x - shoulder.x) * aspect,
     wristY: wrist.y - shoulder.y,
     elbowX: (elbow.x - shoulder.x) * aspect,
+    elbowY: elbow.y - shoulder.y,
+    elbowDepth: hasDepth ? ((shoulder.z ?? 0) - (elbow.z ?? 0)) * aspect : null,
+    confidence: Math.min(
+      ...joints.map((joint) =>
+        Math.min(points[joint].visibility ?? 0, points[joint].presence ?? 1),
+      ),
+    ),
+    forearmLength: lowerLength,
   };
+}
+
+function armDistance(a: ArmGeometry, b: ArmGeometry): number {
+  return Math.hypot(
+    a.wristX - b.wristX,
+    a.wristY - b.wristY,
+    a.depth !== null && b.depth !== null ? a.depth - b.depth : 0,
+  );
+}
+
+/** A brief punch needs compatible elbow+wrist motion or a forearm rotation
+ * that preserves bone length, with confident joints and bounded displacement. */
+function coherentStroke(
+  arm: ArmGeometry,
+  neutral: ArmGeometry,
+  torso: number,
+  type: BoxingPunchType,
+): boolean {
+  const wrist = [
+    arm.wristX - neutral.wristX,
+    arm.wristY - neutral.wristY,
+    arm.depth !== null && neutral.depth !== null
+      ? arm.depth - neutral.depth
+      : 0,
+  ];
+  const elbow = [
+    arm.elbowX - neutral.elbowX,
+    arm.elbowY - neutral.elbowY,
+    arm.elbowDepth !== null && neutral.elbowDepth !== null
+      ? arm.elbowDepth - neutral.elbowDepth
+      : 0,
+  ];
+  const wristTravel = Math.hypot(...wrist),
+    elbowTravel = Math.hypot(...elbow);
+  if (
+    Math.min(arm.confidence, neutral.confidence) < 0.6 ||
+    wristTravel < torso * 0.12 ||
+    wristTravel > torso * 1.8 ||
+    elbowTravel > torso * 0.9 ||
+    elbowTravel / wristTravel > 2
+  )
+    return false;
+  if (elbowTravel < torso * 0.025 || elbowTravel / wristTravel < 0.12) {
+    // A person may extend only the forearm while keeping the elbow in place.
+    // Preserve the observed forearm length and require an opening angle;
+    // an arbitrary wrist-depth spike stretches that bone and is rejected.
+    const lengthStable =
+      Math.abs(arm.forearmLength / neutral.forearmLength - 1) <= 0.2;
+    const outward =
+      arm.depth !== null && neutral.depth !== null
+        ? arm.depth - neutral.depth >= torso * 0.14
+        : Math.abs(arm.wristX - neutral.wristX) >= torso * 0.12;
+    return (
+      elbowTravel <= torso * 0.06 &&
+      lengthStable &&
+      outward &&
+      arm.angle - neutral.angle >= 8
+    );
+  }
+  if (
+    type === "hook" &&
+    arm.depth !== null &&
+    neutral.depth !== null &&
+    arm.elbowDepth !== null &&
+    neutral.elbowDepth !== null
+  )
+    return (
+      arm.depth - neutral.depth >= torso * 0.14 &&
+      arm.elbowDepth - neutral.elbowDepth >= torso * 0.04
+    );
+  return (
+    wrist.reduce((sum, value, index) => sum + value * elbow[index], 0) /
+      (wristTravel * elbowTravel) >=
+    0.3
+  );
+}
+
+function punchTrajectory(
+  arm: ArmGeometry,
+  neutral: ArmGeometry,
+  torso: number,
+  side: 0 | 1,
+  orientation: number,
+): { type: BoxingPunchType; strength: number } | null {
+  if (arm.wristY < -torso * 0.4 || arm.wristY > torso * 0.75) return null;
+  const up = (neutral.wristY - arm.wristY) / torso;
+  const reach = (arm.reach - neutral.reach) / torso;
+  const planar = (arm.planarReach - neutral.planarReach) / torso;
+  const forward =
+    arm.depth !== null && neutral.depth !== null
+      ? (arm.depth - neutral.depth) / torso
+      : 0;
+  const elbowForward =
+    arm.elbowDepth !== null && neutral.elbowDepth !== null
+      ? (arm.elbowDepth - neutral.elbowDepth) / torso
+      : 0;
+  const horizontal = Math.abs(arm.wristX - neutral.wristX) / torso;
+  const inward =
+    (-(arm.wristX - neutral.wristX) *
+      (side === 0 ? orientation : -orientation)) /
+    torso;
+  const elbowOut =
+    (arm.elbowX * (side === 0 ? orientation : -orientation)) / torso;
+  let type: BoxingPunchType | null = null;
+  if (
+    arm.angle >= 50 &&
+    arm.angle <= 145 &&
+    arm.wristY <= torso * 0.05 &&
+    up >= 0.28 &&
+    forward >= 0.3 &&
+    reach >= 0.2
+  )
+    type = "uppercut";
+  else if (
+    arm.angle >= 35 &&
+    arm.angle <= 125 &&
+    inward >= 0.25 &&
+    elbowOut >= 0.25 &&
+    forward >= 0.22 &&
+    reach >= 0.15
+  )
+    type = "hook";
+  else if (
+    arm.angle >= 65 &&
+    !(arm.angle < 125 && inward >= 0.12 && elbowOut >= 0.25) &&
+    ((forward >= 0.14 &&
+      reach >= 0.06 &&
+      (arm.angle - neutral.angle >= 4 || elbowForward >= 0.06)) ||
+      (planar >= 0.18 &&
+        arm.planarReach >= torso * 0.55 &&
+        horizontal >= 0.12 &&
+        arm.angle - neutral.angle >= 6 &&
+        (arm.depth === null || forward >= -0.05)))
+  )
+    type = "straight";
+  return type ? { type, strength: Math.max(reach, forward, inward) } : null;
 }
 
 /**
  * Upper-body air boxing. Body calibration is separate from arm retraction.
- * Relative joint changes plus two coherent samples reject one-frame jumps;
+ * Relative joint changes support bent-arm jabs. A sustained extension or a
+ * coherent outward-and-return stroke confirms a punch without holding still;
  * each person owns their own body baseline, arms, defence and event history.
  */
 export class BoxingEstimator {
@@ -206,6 +368,8 @@ export class BoxingEstimator {
         null,
         this.guarding ? "交叉防守中" : "請繼續對空出拳",
       );
+    const sampleInterval =
+      this.lastFrameAt === null ? 0 : timeMs - this.lastFrameAt;
     this.lastFrameAt = timeMs;
     const aspect =
       Number.isFinite(imageAspect) && imageAspect > 0 ? imageAspect : 1;
@@ -337,12 +501,13 @@ export class BoxingEstimator {
         if (
           !crossed &&
           arm &&
-          arm.angle <= 115 &&
-          arm.reach <= torso * 0.85 &&
-          (arm.depth === null || arm.depth <= torso * 0.7)
+          arm.angle <= 135 &&
+          arm.reach <= torso * 0.95 &&
+          (arm.depth === null || arm.depth <= torso * 0.75)
         ) {
           this.arms[side].armed = true;
           this.arms[side].neutral = { ...arm };
+          this.arms[side].lastNeutralAt = timeMs;
         } else {
           this.arms[side].armed = false;
           this.arms[side].neutral = null;
@@ -438,6 +603,7 @@ export class BoxingEstimator {
       side: 0 | 1;
       type: BoxingPunchType;
       strength: number;
+      returned?: boolean;
     }> = [];
     for (const side of [0, 1] as const) {
       const arm = geometry[side],
@@ -462,67 +628,62 @@ export class BoxingEstimator {
           (arm.depth === null ||
             history.neutral.depth === null ||
             Math.abs(arm.depth - history.neutral.depth) <= torso * 0.12));
+      const trajectory = history.neutral
+        ? punchTrajectory(arm, history.neutral, torso, side, orientation)
+        : null;
       const retracted =
         nearPreviousNeutral &&
-        arm.angle <= 115 &&
-        arm.reach <= torso * 0.85 &&
-        (arm.depth === null || arm.depth <= torso * 0.7);
-      if (retracted) {
+        arm.angle <= 135 &&
+        arm.reach <= torso * 0.95 &&
+        (arm.depth === null || arm.depth <= torso * 0.75);
+      const pulseWindow = Math.min(
+        MAX_FRAME_GAP_MS,
+        Math.max(700, sampleInterval * 2.5),
+      );
+      if (retracted && !trajectory) {
+        const peak = history.candidate;
+        if (
+          history.armed &&
+          peak?.coherent &&
+          peak.allowPulse &&
+          timeMs - peak.since <= pulseWindow &&
+          timeMs - history.lastNeutralAt >= 30 &&
+          timeMs - history.lastNeutralAt <= pulseWindow * 2 &&
+          timeMs - history.lastPunchAt >= PUNCH_COOLDOWN_MS
+        ) {
+          // A quick fist may appear in only one captured frame. Its observed
+          // elbow+wrist advance AND its return confirm the complete stroke.
+          candidates.push({
+            side,
+            type: peak.type,
+            strength: peak.strength,
+            returned: true,
+          });
+          history.lastPunchAt = timeMs;
+        }
         // Freeze an armed return position. Following every small bent-arm
         // change would chase a slow hook/uppercut and erase its trajectory.
         if (!history.armed || !history.neutral) history.neutral = { ...arm };
         history.armed = true;
         history.candidate = null;
+        history.lastNeutralAt = timeMs;
         continue;
       }
       if (!history.armed || !history.neutral) continue;
       const neutral = history.neutral;
-      const up = (neutral.wristY - arm.wristY) / torso;
-      const reachChange = (arm.reach - neutral.reach) / torso;
-      const planarChange = (arm.planarReach - neutral.planarReach) / torso;
-      const forwardChange =
-        arm.depth !== null && neutral.depth !== null
-          ? (arm.depth - neutral.depth) / torso
-          : 0;
-      const inward =
-        (-(arm.wristX - neutral.wristX) *
-          (side === 0 ? orientation : -orientation)) /
-        torso;
-      const elbowOut =
-        (arm.elbowX * (side === 0 ? orientation : -orientation)) / torso;
-      let type: BoxingPunchType | null = null;
-      if (arm.wristY >= -torso * 0.4 && arm.wristY <= torso * 0.75) {
-        if (
-          arm.angle >= 50 &&
-          arm.angle <= 145 &&
-          arm.wristY <= torso * 0.05 &&
-          up >= 0.28 &&
-          forwardChange >= 0.3 &&
-          reachChange >= 0.2
-        )
-          type = "uppercut";
-        else if (
-          arm.angle >= 35 &&
-          arm.angle <= 125 &&
-          inward >= 0.25 &&
-          elbowOut >= 0.25 &&
-          forwardChange >= 0.22 &&
-          reachChange >= 0.15
-        )
-          type = "hook";
-        else if (
-          arm.angle >= 125 &&
-          arm.angle - neutral.angle >= 18 &&
-          ((forwardChange >= 0.22 && reachChange >= 0.15) ||
-            (planarChange >= 0.3 &&
-              arm.planarReach >= torso * 0.85 &&
-              arm.angle >= 140 &&
-              (arm.depth === null || forwardChange >= -0.05)))
-        )
-          type = "straight";
-      }
-      if (!type) {
-        history.candidate = null;
+      if (!trajectory) {
+        const peak = history.candidate;
+        const returning =
+          peak?.coherent &&
+          peak.allowPulse &&
+          timeMs - peak.since <= pulseWindow &&
+          arm.wristY >= -torso * 0.4 &&
+          arm.wristY <= torso * 0.75 &&
+          (arm.depth === null ||
+            neutral.depth === null ||
+            arm.depth >= neutral.depth - torso * 0.12) &&
+          armDistance(arm, neutral) <= armDistance(peak.peak, neutral) * 1.15;
+        if (!returning) history.candidate = null;
         if (
           arm.wristY < -torso * 0.4 ||
           (arm.depth !== null && arm.depth < -torso * 0.1)
@@ -532,9 +693,44 @@ export class BoxingEstimator {
         }
         continue;
       }
-      if (history.candidate?.type !== type)
-        history.candidate = { type, since: timeMs, frames: 1 };
-      else history.candidate.frames += 1;
+      const { type, strength } = trajectory;
+      const coherent = coherentStroke(arm, neutral, torso, type);
+      if (history.candidate?.type !== type) {
+        const previous = history.candidate;
+        const allowPulse =
+          previous === null ||
+          (previous.allowPulse &&
+            previous.type === "straight" &&
+            previous.peak.angle < 125);
+        history.candidate = {
+          type,
+          since: timeMs,
+          frames: 1,
+          peak: { ...arm },
+          strength,
+          coherent,
+          allowPulse,
+          last: { ...arm },
+          lastAt: timeMs,
+          steadySince: timeMs,
+        };
+      } else {
+        history.candidate.frames += 1;
+        const interval = timeMs - history.candidate.lastAt;
+        if (
+          interval > 0 &&
+          armDistance(arm, history.candidate.last) / torso / (interval / 1000) >
+            0.2
+        )
+          history.candidate.steadySince = timeMs;
+        history.candidate.last = { ...arm };
+        history.candidate.lastAt = timeMs;
+        if (strength >= history.candidate.strength) {
+          history.candidate.peak = { ...arm };
+          history.candidate.strength = strength;
+          history.candidate.coherent = coherent;
+        }
+      }
       if (timeMs - history.candidate.since > MAX_FRAME_GAP_MS) {
         history.armed = false;
         history.neutral = null;
@@ -544,6 +740,9 @@ export class BoxingEstimator {
       if (
         history.candidate.frames < 2 ||
         timeMs - history.candidate.since < PUNCH_CONFIRM_MS ||
+        (type === "straight" &&
+          arm.angle < 125 &&
+          timeMs - history.candidate.steadySince < PUNCH_CONFIRM_MS) ||
         timeMs - history.lastPunchAt < PUNCH_COOLDOWN_MS
       )
         continue;
@@ -553,14 +752,14 @@ export class BoxingEstimator {
       candidates.push({
         side,
         type,
-        strength: Math.max(reachChange, forwardChange, inward),
+        strength,
       });
     }
     if (candidates.length > 0) {
       candidates.sort((a, b) => b.strength - a.strength);
       const event = candidates[0];
       for (const candidate of candidates) {
-        this.arms[candidate.side].armed = false;
+        this.arms[candidate.side].armed = candidate.returned === true;
         this.arms[candidate.side].candidate = null;
       }
       this.punches += 1;

@@ -92,13 +92,13 @@ try {
     "main",
     sourceFiles,
     root,
-    "Extend boxing stamina with calibrated punch types, dodges and local Full pose model",
+    "Recognize bent-arm jabs and quick punch-return strokes with responsive camera input",
   );
   await publish(
     "gh-pages",
     await filesUnder(join(root, "dist-pages")),
     join(root, "dist-pages"),
-    "Publish longer boxing matches and improved motion analysis",
+    "Publish short and quick boxing punch recognition",
   );
   console.log(
     `Website files uploaded. GitHub Pages deploys the gh-pages branch automatically.\nWebsite: ${website}`,

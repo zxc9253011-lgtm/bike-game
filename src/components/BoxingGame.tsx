@@ -138,7 +138,7 @@ function readHistory(): BoxingRecord[] {
 export default function BoxingGame({ onExit }: { onExit: () => void }) {
   const [source, setSource] = useState<Source>("demo");
   const [trackingQuality, setTrackingQuality] = useState<"accurate" | "fast">(
-    "accurate",
+    "fast",
   );
   const [duration, setDuration] = useState(60);
   const [match, setMatch] = useState(() => createBoxingMatch(60));
@@ -345,7 +345,7 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
       // The clock and the same two-person snapshot resolve together. A punch
       // never survives pause, tracking loss, or the end-of-round gong.
       commit(advanceBoxingMatch(matchRef.current, delta, actions));
-    }, 100);
+    }, 50);
     return () => window.clearInterval(interval);
   }, [running, commit]);
   useEffect(() => {
@@ -732,8 +732,8 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
         </label>
         <span>
           {trackingQuality === "accurate"
-            ? "精準辨識 · 光線清楚效果較好"
-            : "較快反應 · 適合較慢的電腦"}
+            ? "平穩辨識 · 適合較慢的動作"
+            : "優先捕捉短拳與快拳 · 手臂不用伸直"}
         </span>
       </section>
 
@@ -743,6 +743,7 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
         aria-label="3D 雙人拳擊擂台"
       >
         <BoxingScene
+          analysisActive={source === "camera"}
           running={running}
           players={actors}
           finished={!!match.result}
@@ -1131,7 +1132,7 @@ export default function BoxingGame({ onExit }: { onExit: () => void }) {
           <span>02</span>
           <h2>出拳攻擊</h2>
           <p>
-            向前伸拳是直拳；屈肘向側前方揮拳是勾拳；拳頭從較低的胸前往上送是上鉤拳。每次收回手再出拳，命中得
+            手臂保持微彎、短距離往前送拳也能出直拳，不必伸直或停住；屈肘向側前方揮拳是勾拳，拳頭從胸前往上送是上鉤拳。每次收回手再出拳，命中得
             10 分；不必追求速度或幅度。
           </p>
         </article>

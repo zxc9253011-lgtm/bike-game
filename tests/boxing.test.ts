@@ -113,6 +113,142 @@ test("the three deliberate trajectories produce different punch types", () => {
     assert.equal(result.punchType, type, kind);
   }
 });
+
+function shortJab(side: BoxingSide = "left"): PosePoint[] {
+  const points = pose();
+  // The punching elbow opens only to about 81 degrees, far below the former
+  // 125-degree requirement. Both elbow and fist still make a forward stroke.
+  const elbow = { x: 0.66, y: 0.45, z: -0.06, visibility: 0.99 };
+  const wrist = { x: 0.63, y: 0.37, z: -0.21, visibility: 0.99 };
+  points[side === "left" ? 13 : 14] =
+    side === "left" ? elbow : { ...elbow, x: 1 - elbow.x };
+  points[side === "left" ? 15 : 16] =
+    side === "left" ? wrist : { ...wrist, x: 1 - wrist.x };
+  return points;
+}
+
+test("short left and right jabs work while the elbow remains substantially bent", () => {
+  for (const side of ["left", "right"] as const) {
+    const e = new BoxingEstimator();
+    ready(e);
+    const result = punch(e, shortJab(side));
+    assert.equal(result.punch, side);
+    assert.equal(result.punchType, "straight");
+    for (const t of [500, 700, 1000])
+      assert.equal(
+        e.update(shortJab(side), t).punch,
+        null,
+        "holding a bent arm does not repeat",
+      );
+  }
+});
+
+test("a brief bent-arm jab is counted on its return without holding an extended pose", () => {
+  const e = new BoxingEstimator();
+  ready(e);
+  assert.equal(e.update(shortJab(), 263).punch, null);
+  const result = e.update(pose(), 296);
+  assert.equal(result.punch, "left");
+  assert.equal(result.punchType, "straight");
+  assert.equal(result.punches, 1);
+  assert.equal(e.update(pose(), 329).punch, null);
+});
+
+test("a limited forearm-only jab does not require the elbow itself to move", () => {
+  const e = new BoxingEstimator();
+  const neutralPose = pose();
+  neutralPose[15] = { x: 0.62, y: 0.37, z: -0.08, visibility: 0.99 };
+  ready(e, neutralPose);
+  const peak = neutralPose.map((point) => ({ ...point }));
+  // The same elbow and essentially the same forearm length: only its angle
+  // changes, and it remains bent at about 85 degrees at the observed peak.
+  peak[15] = { x: 0.65, y: 0.455, z: -0.149, visibility: 0.99 };
+  assert.equal(e.update(peak, 263).punch, null);
+  assert.equal(e.update(neutralPose, 296).punchType, "straight");
+  assert.equal(e.update(neutralPose, 329).punches, 1);
+});
+
+test("brief full, hook and uppercut strokes need a coherent arm and a real return", () => {
+  for (const [kind, expected] of [
+    ["left", "straight"],
+    ["hook", "hook"],
+    ["uppercut", "uppercut"],
+  ] as const) {
+    const e = new BoxingEstimator();
+    ready(e);
+    assert.equal(e.update(pose(kind), 263).punch, null);
+    assert.equal(e.update(pose(), 296).punchType, expected, kind);
+    assert.equal(e.update(pose(), 329).punches, 1);
+  }
+});
+
+test("short pulses remain independent and allow successive retracted jabs 200ms apart", () => {
+  const players = [new BoxingEstimator(), new BoxingEstimator()];
+  players.forEach((e) => ready(e));
+  for (const [time, side] of [
+    [330, "left"],
+    [530, "right"],
+  ] as const) {
+    players[0].update(shortJab(side), time);
+    assert.equal(players[0].update(pose(), time + 50).punch, side);
+    assert.equal(players[1].update(pose(), time + 50).punches, 0);
+  }
+  assert.equal(players[0].update(pose(), 620).punches, 2);
+});
+
+test("a quick stroke can include an intermediate return sample before reaching neutral", () => {
+  const e = new BoxingEstimator();
+  ready(e);
+  e.update(shortJab(), 263);
+  const halfway = pose();
+  for (const index of [13, 15]) {
+    const target = shortJab()[index];
+    halfway[index] = {
+      ...target,
+      x: (target.x + halfway[index].x) / 2,
+      y: (target.y + halfway[index].y) / 2,
+      z: (target.z! + halfway[index].z!) / 2,
+    };
+  }
+  assert.equal(e.update(halfway, 296).punch, null);
+  assert.equal(e.update(pose(), 329).punch, "left");
+});
+
+test("isolated wrists, conflicting elbow motion and uncertain spikes cannot confirm a short pulse", () => {
+  for (const kind of ["wrist", "opposite", "confidence"] as const) {
+    const e = new BoxingEstimator();
+    ready(e);
+    const points = shortJab();
+    if (kind === "wrist") points[13] = pose()[13];
+    if (kind === "opposite") points[13] = { ...points[13], y: 0.51, z: 0.02 };
+    if (kind === "confidence") points[15].visibility = 0.5;
+    e.update(points, 263);
+    assert.equal(e.update(pose(), 296).punches, 0, kind);
+  }
+});
+
+test("pausing or losing a joint between a peak and its return discards the pulse", () => {
+  for (const kind of ["pause", "missing", "missing-arm"] as const) {
+    const e = new BoxingEstimator();
+    ready(e);
+    e.update(shortJab(), 263);
+    if (kind === "pause") e.update(pose(), 296, 1, { active: false });
+    else if (kind === "missing-arm") {
+      const partial = pose();
+      partial[13].visibility = 0.1;
+      e.update(partial, 296);
+    } else e.update(undefined, 296);
+    assert.equal(e.update(pose(), 329).punches, 0);
+  }
+});
+
+test("one observed peak and its return are supported at a lower live sampling rate", () => {
+  const e = new BoxingEstimator();
+  ready(e);
+  e.update(shortJab(), 730);
+  assert.equal(e.update(pose(), 1230).punch, "left");
+  assert.equal(e.update(pose(), 1730).punches, 1);
+});
 test("a gentle bent uppercut is classified before it can overwrite its neutral baseline", () => {
   const e = new BoxingEstimator();
   ready(e);
@@ -133,10 +269,12 @@ test("image-plane straight punches work without depth; a mere upward hand raise 
   raised[15].y = 0.32;
   assert.equal(punch(e, raised).punch, null);
 });
-test("single-frame extension spikes and changing type candidates never complete an old punch", () => {
+test("isolated wrist spikes and changing type candidates never complete an old punch", () => {
   const e = new BoxingEstimator();
   ready(e);
-  e.update(pose("left"), 330);
+  const spike = pose();
+  spike[15] = pose("left")[15];
+  e.update(spike, 330);
   assert.equal(e.update(pose(), 380).punches, 0);
   e.update(pose("hook"), 460);
   assert.equal(e.update(pose("uppercut"), 540).punches, 0);

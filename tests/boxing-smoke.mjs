@@ -237,7 +237,9 @@ async function installCameraDouble(context) {
         initialize() {
           return Promise.resolve();
         }
-        setOptions() {}
+        setOptions(options) {
+          this.options = options;
+        }
         onResults(callback) {
           this.callback = callback;
         }
@@ -272,13 +274,21 @@ async function installCameraDouble(context) {
               first: index,
               phase,
               programs: state.programs.map((program) =>
-                program.startsWith("spike-") ? program.slice(6) : program,
+                program.startsWith("spike-")
+                  ? program.slice(6)
+                  : program.startsWith("pulse-")
+                    ? program.slice(6)
+                    : program,
               ),
               tracked: [...state.tracked],
               used: 0,
             };
             state.programs = state.programs.map((program) =>
-              program.startsWith("spike-") ? "neutral" : program,
+              program.startsWith("pulse-forearm-")
+                ? program.replace("pulse-forearm-", "forearm-ready-")
+                : program.startsWith("spike-") || program.startsWith("pulse-")
+                  ? "neutral"
+                  : program,
             );
           }
           const capture = state.capture;
@@ -313,6 +323,20 @@ async function installCameraDouble(context) {
             set(14, 0.38, 0.34, -0.22);
             set(16, 0.39, 0.31, -0.55);
           }
+          if (program === "wrist-left") set(15, 0.61, 0.31, -0.55);
+          if (program === "wrist-right") set(16, 0.39, 0.31, -0.55);
+          if (program === "short-left") {
+            set(13, 0.66, 0.45, -0.06);
+            set(15, 0.63, 0.37, -0.21);
+          }
+          if (program === "short-right") {
+            set(14, 0.34, 0.45, -0.06);
+            set(16, 0.37, 0.37, -0.21);
+          }
+          if (program === "forearm-ready-left") set(15, 0.62, 0.37, -0.08);
+          if (program === "forearm-ready-right") set(16, 0.38, 0.37, -0.08);
+          if (program === "forearm-left") set(15, 0.65, 0.455, -0.149);
+          if (program === "forearm-right") set(16, 0.35, 0.455, -0.149);
           if (program === "hook-left") {
             set(13, 0.76, 0.35, -0.1);
             set(15, 0.49, 0.32, -0.3);
@@ -697,7 +721,7 @@ try {
         await sampled(page, { programs: ["neutral", "neutral"] });
         const quietStart = await stats(page);
         for (const programs of [
-          ["spike-left", "spike-right"],
+          ["spike-wrist-left", "spike-wrist-right"],
           ["spike-jump", "neutral"],
           ["wave", "wave"],
         ]) {
@@ -911,6 +935,132 @@ try {
           await page.evaluate(() => window.__boxingDouble.cameraCalls),
           1,
         );
+      },
+      true,
+    );
+
+  if (!selected || selected === "quick")
+    await withScenario(
+      "quick",
+      async (page) => {
+        assert.equal(
+          await page
+            .getByRole("combobox", { name: "拳擊辨識模式", exact: true })
+            .inputValue(),
+          "fast",
+        );
+        await page
+          .getByRole("button", { name: "使用攝影機", exact: true })
+          .click();
+        await sampled(
+          page,
+          { tracked: [true, true], programs: ["neutral", "neutral"] },
+          6,
+        );
+        await expectStats(page, [{ calibrated: true }, { calibrated: true }]);
+        assert.equal(
+          await page.evaluate(() =>
+            window.__boxingDouble.instances.every(
+              (instance) =>
+                instance.options?.modelComplexity === 0 &&
+                instance.options?.smoothLandmarks === false,
+            ),
+          ),
+          true,
+          "the default profile prioritizes brief hand movements",
+        );
+        await start(page);
+        await sampled(page, { programs: ["short-left", "short-right"] }, 5);
+        await expectStats(page, [
+          { punches: 1, hits: 1, hp: 294, score: 10 },
+          { punches: 1, hits: 1, hp: 294, score: 10 },
+        ]);
+        const held = await stats(page);
+        await sampled(page, {}, 7);
+        assert.deepEqual(
+          await stats(page),
+          held,
+          "bent held arms do not repeatedly attack",
+        );
+        await sampled(page, { programs: ["neutral", "neutral"] }, 5);
+        const beforePulse = await page.evaluate(
+          () => window.__boxingDouble.captureId,
+        );
+        await sampled(
+          page,
+          { programs: ["pulse-short-left", "pulse-short-right"] },
+          5,
+        );
+        await expectStats(page, [
+          { punches: 2, hits: 2, hp: 288, score: 20 },
+          { punches: 2, hits: 2, hp: 288, score: 20 },
+        ]);
+        const captures = await page.evaluate(
+          (before) =>
+            window.__boxingDouble.samples.filter(
+              (sample) =>
+                sample.capture > before &&
+                (sample.program === "short-left" ||
+                  sample.program === "short-right"),
+            ),
+          beforePulse,
+        );
+        assert.equal(
+          captures.length,
+          2,
+          "each player's brief punch occurs in exactly one captured frame",
+        );
+        assert.equal(
+          captures[0].capture,
+          captures[1].capture,
+          "the two people share a camera frame, not an injected event",
+        );
+        await sceneAction(page, "punchIds", 1, "2");
+        await sceneAction(page, "punchIds", 2, "2");
+        const beforeNoise = await stats(page);
+        await sampled(
+          page,
+          { programs: ["spike-wrist-left", "spike-wrist-right"] },
+          6,
+        );
+        assert.deepEqual(
+          await stats(page),
+          beforeNoise,
+          "a single isolated wrist jump does not look like a quick complete arm stroke",
+        );
+        await pause(page);
+        const stopped = await stats(page);
+        await sampled(
+          page,
+          { programs: ["pulse-short-left", "pulse-short-right"] },
+          6,
+        );
+        const afterPause = await stats(page);
+        assert.deepEqual(
+          afterPause.map(({ tracking, calibrated, ...fields }) => fields),
+          stopped.map(({ tracking, calibrated, ...fields }) => fields),
+          "paused quick movements never queue punches",
+        );
+        await sampled(
+          page,
+          { programs: ["forearm-ready-left", "forearm-ready-right"] },
+          6,
+        );
+        await expectStats(page, [{ calibrated: true }, { calibrated: true }]);
+        await start(page);
+        await sampled(
+          page,
+          { programs: ["pulse-forearm-left", "pulse-forearm-right"] },
+          6,
+        );
+        await expectStats(page, [
+          { punches: 3, score: 30, hp: 282 },
+          { punches: 3, score: 30, hp: 282 },
+        ]);
+        await pause(page);
+        await page.screenshot({
+          path: join(artifacts, "boxing-short-and-quick.png"),
+        });
       },
       true,
     );

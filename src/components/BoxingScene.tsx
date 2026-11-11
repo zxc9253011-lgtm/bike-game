@@ -16,6 +16,7 @@ export type BoxingSceneProps = {
   players: [BoxingScenePlayer, BoxingScenePlayer];
   finished?: boolean;
   resetKey?: number;
+  analysisActive?: boolean;
 };
 
 type Vec = [number, number, number];
@@ -26,10 +27,11 @@ export default function BoxingScene({
   players,
   finished = false,
   resetKey = 0,
+  analysisActive = false,
 }: BoxingSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const live = useRef({ running, players, finished, resetKey });
-  live.current = { running, players, finished, resetKey };
+  const live = useRef({ running, players, finished, resetKey, analysisActive });
+  live.current = { running, players, finished, resetKey, analysisActive };
   const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
@@ -605,7 +607,11 @@ export default function BoxingScene({
     let currentResetKey = live.current.resetKey;
     const render = (now: number) => {
       frame = requestAnimationFrame(render);
-      if (previous && now - previous < 1000 / 30) return;
+      if (
+        previous &&
+        now - previous < 1000 / (live.current.analysisActive ? 20 : 30)
+      )
+        return;
       const dt = previous ? Math.min((now - previous) / 1000, 0.05) : 0;
       previous = now;
       const current = live.current;

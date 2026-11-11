@@ -55,6 +55,7 @@ await writeFile(imagePath, image);
 const scenarios = [
   {
     name: "both-players",
+    quality: "fast",
     filter:
       "[0:v]scale=640:426,setsar=1,split=2[left][right];[left][right]hstack=inputs=2[out]",
     expected: [true, true],
@@ -62,9 +63,17 @@ const scenarios = [
   {
     // Mirrored preview: the raw left image belongs to visible-right player 2.
     name: "player-2-only",
+    quality: "fast",
     filter:
       "[0:v]scale=640:426,setsar=1[left];color=c=0x26352d:s=640x426:r=10[right];[left][right]hstack=inputs=2[out]",
     expected: [false, true],
+  },
+  {
+    name: "accurate-both-players",
+    quality: "accurate",
+    filter:
+      "[0:v]scale=640:426,setsar=1,split=2[left][right];[left][right]hstack=inputs=2[out]",
+    expected: [true, true],
   },
 ];
 const selected = process.env.BOXING_POSE_SCENARIO
@@ -190,7 +199,7 @@ for (const scenario of selected) {
         badResponses.push(`${response.status()} ${response.url()}`);
       if (
         new URL(response.url()).pathname.endsWith(
-          "/pose/pose_landmark_full.tflite",
+          `/pose/pose_landmark_${scenario.quality === "accurate" ? "full" : "lite"}.tflite`,
         )
       )
         fullModelResponses.push({
@@ -256,9 +265,13 @@ for (const scenario of selected) {
       await page
         .getByRole("combobox", { name: "拳擊辨識模式", exact: true })
         .inputValue(),
-      "accurate",
-      "boxing starts with the accurate local pose model",
+      "fast",
+      "boxing starts with the responsive profile for brief movements",
     );
+    if (scenario.quality === "accurate")
+      await page
+        .getByRole("combobox", { name: "拳擊辨識模式", exact: true })
+        .selectOption("accurate");
     await page.getByRole("button", { name: "使用攝影機", exact: true }).click();
     await page.waitForFunction(
       () => {
@@ -360,8 +373,13 @@ for (const scenario of selected) {
     assert.equal(detected.cameraCalls, 1);
     assert.equal(detected.exercise, "boxing");
     assert.ok(
-      detected.models.every((model) => model.options?.modelComplexity === 1),
-      "both real pose graphs use modelComplexity 1 for accurate boxing analysis",
+      detected.models.every(
+        (model) =>
+          model.options?.modelComplexity ===
+            (scenario.quality === "accurate" ? 1 : 0) &&
+          model.options?.smoothLandmarks === (scenario.quality === "accurate"),
+      ),
+      "both real models use the selected profile and wrist smoothing policy",
     );
     assert.ok(
       fullModelResponses.length > 0 &&
@@ -369,7 +387,7 @@ for (const scenario of selected) {
           (response) =>
             response.status === 200 && new URL(response.url).origin === origin,
         ),
-      "the full pose model is fetched successfully from the local site",
+      "the selected pose model is fetched successfully from the local site",
     );
     assert.equal(
       detected.models.filter((model) => model.landmarks?.length === 33).length,

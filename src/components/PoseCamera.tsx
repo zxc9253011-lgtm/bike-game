@@ -799,7 +799,11 @@ export default function PoseCamera({
         session.model = model;
         model.setOptions({
           modelComplexity: poseQuality === "accurate" ? 1 : 0,
-          smoothLandmarks: true,
+          // Fast boxing keeps brief wrist motion; other modes retain the
+          // model's smoothing and boxing still checks a complete arm stroke.
+          smoothLandmarks:
+            live.current.exerciseMode !== "boxing" ||
+            poseQuality === "accurate",
           enableSegmentation: false,
           minDetectionConfidence: 0.5,
           minTrackingConfidence: 0.5,
@@ -986,6 +990,9 @@ export default function PoseCamera({
             facingMode: "user",
             width: { ideal: playerCount === 2 ? 1280 : 960 },
             height: { ideal: 720 },
+            ...(live.current.exerciseMode === "boxing"
+              ? { frameRate: { ideal: 30 } }
+              : {}),
           },
           audio: false,
         });
